@@ -1,0 +1,8 @@
+[submodule "third_party/googletest"]
+    ignore = dirty
+    path = third_party/googletest
+    url = https://github.com/google/googletest.git
+[submodule "third_party/glog"]
+    ignore = dirty
+    path = third_party/glog
+    url = https://github.com/google/glog
