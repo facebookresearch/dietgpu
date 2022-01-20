@@ -12,3 +12,7 @@ It currently consists of two parts:
 The rANS codec operates on 8 bit bytes. The floating point compressor at the moment uses the rANS codec to handle compression of floating point exponents, as typically in ML/HPC data a very limited exponent dynamic range is used and is highly compressible. Floating point sign and significand values tend to be less compressible / fairly high entropy in practice, though sparse data or presence of functions like ReLU in neural networks can result in a lot of outright zero values which are very compressible. A future extension to the library will allow for specialized compression of sparse or semi-sparse data, specializing compression of zeros.
 
 Both APIs are available in both C++ (raw pointers) and Python/PyTorch (PyTorch tensor) API forms.
+
+## License
+
+DietGPU is licensed with the MIT license, available in the LICENSE file at the top level.
