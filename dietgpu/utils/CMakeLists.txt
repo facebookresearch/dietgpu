@@ -9,8 +9,6 @@ target_include_directories(dietgpu_utils PUBLIC
 )
 target_link_libraries(dietgpu_utils PUBLIC
   ${CUDA_LIBRARIES}
-)
-target_link_libraries(dietgpu_utils PRIVATE
   glog::glog
 )
 target_compile_options(dietgpu_utils PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
