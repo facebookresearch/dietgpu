@@ -13,6 +13,52 @@ It currently consists of two parts:
 
 Both APIs are available in both C++ (raw device pointers) and Python/PyTorch (PyTorch tensor) API forms.
 
+## Building
+
+Clone this repo using
+
+```shell
+git clone --recursive https://github.com/facebookresearch/dietgpu
+cd dietgpu
+```
+
+Then the simplest way is to use the included Dockerfile, which installs the PyTorch dependencies *and* uses NVIDIA's dev image as a base (for the CUDA dependencies):
+
+```shell
+docker build -t dietgpu .
+docker run --privileged --runtime=nvidia --rm -v $(pwd):/dietgpu -it dietgpu:latest
+```
+
+Note you need NVIDIA's container runtime installed (if on Fedora consult this [Github issue](https://github.com/NVIDIA/nvidia-docker/issues/706#issuecomment-851816502)).
+
+Then do the standard CMake thing:
+
+```shell
+cd dietgpu; mkdir build; cd build;
+cmake .. -G Ninja
+cmake --build . --target all
+```
+
+If you get complaints about `TorchConfig.cmake` then your `CMAKE_PREFIX_PATH` doesn't have the right paths; run
+
+```shell
+python -c 'import torch;print(torch.utils.cmake_prefix_path)'
+```
+
+to discover where `TorchConfig.cmake` lives (and add that path to your `CMAKE_PREFIX_PATH`).
+In general, you can run
+```shell
+export CMAKE_PREFIX_PATH="$(dirname $(which conda))/../:$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')"
+```
+
+If you get complaints about `/dietgpu/third_party/glog... does not contain a CMakeLists.txt file.` then you didn't pull the submodules; run
+
+```shell
+git submodule sync
+git submodule update --init --recursive --jobs 0
+```
+and try again.
+
 ## Library rationale
 
 As on-device global memory / HBM bandwidth continues to improve at a faster rate than CPU/GPU interconnect or server-to-server networking bandwidth, spending GPU compute and gmem bandwidth to save on data sent over interconnects is becoming more advantageous. DietGPU aims to target this gap.
