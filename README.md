@@ -1,4 +1,4 @@
-# DietGPU: specialized lossless compression at 250-600 GByte/s
+# DietGPU: GPU-based lossless compression for numerical data
 
 Author: Jeff Johnson (@wickedfoo), `jhj _at_ fb.com`
 
@@ -12,6 +12,10 @@ It currently consists of two parts:
 - **Floating point codec**: an extension to the above to handle fast lossless compression and decompression of unstructured floating point data, for use in ML and HPC applications, especially in communicating over local interconnects (PCIe / NVLink) and remote interconnects (Ethernet / InfiniBand). This operates at around 250-600 GB/s for reasonable data sizes on an A100 GPU.
 
 Both APIs are available in both C++ (raw device pointers) and Python/PyTorch (PyTorch tensor) API forms.
+
+## Documentation
+
+Documentation is [available in the wiki](https://github.com/facebookresearch/dietgpu/wiki).
 
 ## Building
 
