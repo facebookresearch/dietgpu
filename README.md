@@ -13,6 +13,10 @@ It currently consists of two parts:
 
 Both APIs are available in both C++ (raw device pointers) and Python/PyTorch (PyTorch tensor) API forms.
 
+## Documentation
+
+Documentation is [available in the wiki](https://github.com/facebookresearch/dietgpu/wiki).
+
 ## Building
 
 Clone this repo using
