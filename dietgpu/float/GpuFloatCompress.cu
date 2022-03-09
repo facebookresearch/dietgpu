@@ -21,14 +21,30 @@
 namespace dietgpu {
 
 uint32_t getMaxFloatCompressedSize(FloatType floatType, uint32_t size) {
-  return
-      // 16 byte header
-      sizeof(GpuFloatHeader) +
-      // FP uncompressed data (1 byte per float), rounded to 16 bytes (for
-      // alignment)
-      roundUp(size, sizeof(uint4)) +
-      // the ANS compressed data (bytes), which is also a multiple of 16 bytes
-      getMaxCompressedSize(size);
+  // kNotCompressed bytes per float are simply stored uncompressed
+  // rounded up to 16 bytes to ensure alignment of the following ANS data
+  // portion
+  uint32_t floatBytes = 0;
+
+  switch (floatType) {
+    case kFloat16:
+      floatBytes = FloatTypeInfo<FloatType::kFloat16>::kNotCompressed;
+      break;
+    case kBFloat16:
+      floatBytes = FloatTypeInfo<FloatType::kBFloat16>::kNotCompressed;
+      break;
+    case kFloat32:
+      floatBytes = FloatTypeInfo<FloatType::kFloat32>::kNotCompressed;
+      break;
+    default:
+      CHECK(false);
+      break;
+  }
+
+  // Include size of GpuFloatHeader which is at the beginning of the compressed
+  // data, plus the estimate of the ANS compressed portion of the data
+  return sizeof(GpuFloatHeader) + getMaxCompressedSize(size) +
+      roundUp(size * floatBytes, sizeof(uint4));
 }
 
 void floatCompress(

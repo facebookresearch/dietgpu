@@ -298,19 +298,7 @@ __global__ void quantizeWeights(
   } else if (diff < 0) {
     diff = -diff;
 
-    // for (int i = 0; i < Threads; ++i) {
-    //   if (tid == i) {
-    //     printf("tid %d %d sorted qProb %u diff %d ns %d\n", tid, tidSymbol,
-    //     qProb, diff, numSymbols);
-    //   }
-    //   __syncthreads();
-    // }
-
     while (diff > 0) {
-      // if (tid == 0) {
-      //   printf("new iter diff %d!\n", diff);
-      // }
-
       // We need to determine the remaining number of >1 values
       // FIXME: clean up
       int qNumGt1s = warpReduceAllSum((int)(qProb > 1));
@@ -332,12 +320,6 @@ __global__ void quantizeWeights(
 
       qNumGt1s = smemSum2[0];
 
-      // if (tid == 0) {
-      //   printf("num >1s: %d\n", qNumGt1s);
-      // }
-
-      __syncthreads();
-
       // subtract from smallest >1 values
       // This should be the index of the first 1 value
       // FIXME: use div/mod to avoid iterations
@@ -346,8 +328,6 @@ __global__ void quantizeWeights(
       int startIndex = qNumGt1s - iterToApply;
 
       if (tid >= startIndex && tid < qNumGt1s) {
-        //   printf("sub from tid %d %d has %d cur diff %d iterToApply %d\n",
-        //   tid, tidSymbol, qProb, diff, iterToApply);
         qProb -= 1;
       }
 
@@ -357,23 +337,14 @@ __global__ void quantizeWeights(
     }
   }
 
-  // if (tid < numSymbols) {
-  //   printf("after tid %d tidSym %d qProb %u sorted (%u, %u) diff %d\n",
-  //          tid, tidSymbol, qProb, sortedPair >> 16, sortedPair & 0xffff,
-  //          diff);
-  // }
-
   // Recover the pre-sort order
   __shared__ uint32_t smemPdf[kNumSymbols];
 
-  if (tidSymbol - minSym < numSymbols) {
-    // Write out in order
-    smemPdf[tidSymbol - minSym] = qProb;
-  }
+  smemPdf[tidSymbol] = qProb;
 
   __syncthreads();
 
-  uint32_t symPdf = tid < numSymbols ? smemPdf[tid] : 0;
+  uint32_t symPdf = smemPdf[tid];
 
   using Scan = cub::BlockScan<uint32_t, Threads>;
   __shared__ typename Scan::TempStorage smemScan;
@@ -381,17 +352,15 @@ __global__ void quantizeWeights(
   uint32_t symCdf = 0;
   Scan(smemScan).ExclusiveSum(symPdf, symCdf);
 
-  if (tid < numSymbols) {
-    // Compute divisor information (constant division via integer
-    // multiplication + shift)
-    uint32_t shift = 32 - __clz(symPdf - 1);
+  // Compute divisor information (constant division via integer
+  // multiplication + shift)
+  uint32_t shift = 32 - __clz(symPdf - 1);
 
-    constexpr uint64_t one = 1;
-    uint64_t magic = ((one << 32) * ((one << shift) - symPdf)) / symPdf + 1;
+  constexpr uint64_t one = 1;
+  uint64_t magic = ((one << 32) * ((one << shift) - symPdf)) / symPdf + 1;
 
-    // magic should be able to fit
-    table[tid] = uint4{symPdf, symCdf, (uint32_t)magic, shift};
-  }
+  // magic should be able to fit
+  table[tid] = uint4{symPdf, symCdf, (uint32_t)magic, shift};
 
   if (tid == 0) {
     *minAndNumSymbols = uint2{(uint32_t)minSym, (uint32_t)numSymbols};

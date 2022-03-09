@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "dietgpu/float/GpuFloatCodec.h"
+#include "dietgpu/float/GpuFloatUtils.cuh"
 #include "dietgpu/utils/StackDeviceMemory.h"
 
 using namespace dietgpu;
@@ -79,35 +80,52 @@ uint16_t float32ToFloat16(float f) {
   return (sign | (exponent << 10) | mantissa);
 }
 
-std::vector<uint16_t> generateFloats(FloatType ft, int num) {
+template <FloatType FT>
+struct GenerateFloat;
+
+template <>
+struct GenerateFloat<FloatType::kFloat16> {
+  static FloatTypeInfo<FloatType::kFloat16>::WordT gen(float v) {
+    return float32ToFloat16(v);
+  }
+};
+
+template <>
+struct GenerateFloat<FloatType::kBFloat16> {
+  static FloatTypeInfo<FloatType::kBFloat16>::WordT gen(float v) {
+    return float32ToBFloat16(v);
+  }
+};
+
+template <>
+struct GenerateFloat<FloatType::kFloat32> {
+  static FloatTypeInfo<FloatType::kFloat32>::WordT gen(float v) {
+    FloatTypeInfo<FloatType::kFloat32>::WordT out;
+    std::memcpy(&out, &v, sizeof(float));
+    return out;
+  }
+};
+
+template <FloatType FT>
+std::vector<typename FloatTypeInfo<FT>::WordT> generateFloats(int num) {
   std::mt19937 gen(10 + num);
   std::normal_distribution<float> dist;
 
-  auto out = std::vector<uint16_t>(num);
+  auto out = std::vector<typename FloatTypeInfo<FT>::WordT>(num);
   for (auto& v : out) {
-    float s = dist(gen);
-
-    switch (ft) {
-      case kFloat16:
-        v = float32ToFloat16(s);
-        break;
-      case kBFloat16:
-        v = float32ToBFloat16(s);
-        break;
-      default:
-        assert(false);
-        break;
-    }
+    v = GenerateFloat<FT>::gen(dist(gen));
   }
 
   return out;
 }
 
+template <FloatType FT>
 void runBatchPointerTest(
     StackDeviceMemory& res,
-    FloatType ft,
     int probBits,
     const std::vector<uint32_t>& batchSizes) {
+  using FTI = FloatTypeInfo<FT>;
+
   // run on a different stream to test stream assignment
   auto stream = CudaStream::makeNonBlocking();
 
@@ -119,16 +137,16 @@ void runBatchPointerTest(
     maxSize = std::max(maxSize, v);
   }
 
-  auto maxCompressedSize = getMaxFloatCompressedSize(ft, maxSize);
+  auto maxCompressedSize = getMaxFloatCompressedSize(FT, maxSize);
 
-  auto orig = generateFloats(ft, totalSize);
+  auto orig = generateFloats<FT>(totalSize);
   auto orig_dev = res.copyAlloc(stream, orig);
 
   auto inPtrs = std::vector<const void*>(batchSizes.size());
   {
     uint32_t curOffset = 0;
     for (int i = 0; i < inPtrs.size(); ++i) {
-      inPtrs[i] = (const uint16_t*)orig_dev.data() + curOffset;
+      inPtrs[i] = (const typename FTI::WordT*)orig_dev.data() + curOffset;
       curOffset += batchSizes[i];
     }
   }
@@ -144,7 +162,7 @@ void runBatchPointerTest(
 
   auto outBatchSize_dev = res.alloc<uint32_t>(stream, numInBatch);
 
-  auto compConfig = FloatCompressConfig(ft, probBits, false);
+  auto compConfig = FloatCompressConfig(FT, probBits, false);
 
   floatCompress(
       res,
@@ -157,13 +175,13 @@ void runBatchPointerTest(
       stream);
 
   // Decode data
-  auto dec_dev = res.alloc<uint16_t>(stream, totalSize);
+  auto dec_dev = res.alloc<typename FTI::WordT>(stream, totalSize);
 
   auto decPtrs = std::vector<void*>(batchSizes.size());
   {
     uint32_t curOffset = 0;
     for (int i = 0; i < inPtrs.size(); ++i) {
-      decPtrs[i] = (uint16_t*)dec_dev.data() + curOffset;
+      decPtrs[i] = (typename FTI::WordT*)dec_dev.data() + curOffset;
       curOffset += batchSizes[i];
     }
   }
@@ -171,7 +189,7 @@ void runBatchPointerTest(
   auto outSuccess_dev = res.alloc<uint8_t>(stream, numInBatch);
   auto outSize_dev = res.alloc<uint32_t>(stream, numInBatch);
 
-  auto decompConfig = FloatDecompressConfig(ft, probBits, false);
+  auto decompConfig = FloatDecompressConfig(FT, probBits, false);
 
   floatDecompress(
       res,
@@ -193,7 +211,36 @@ void runBatchPointerTest(
   }
 
   auto dec = dec_dev.copyToHost(stream);
+
+  for (int i = 0; i < orig.size(); ++i) {
+    if (orig[i] != dec[i]) {
+      std::cout << "mismatch at " << i << " / " << orig.size() << ": "
+                << orig[i] << " " << dec[i] << "\n";
+    }
+  }
+
   EXPECT_EQ(orig, dec);
+}
+
+void runBatchPointerTest(
+    StackDeviceMemory& res,
+    FloatType ft,
+    int probBits,
+    const std::vector<uint32_t>& batchSizes) {
+  switch (ft) {
+    case FloatType::kFloat16:
+      runBatchPointerTest<FloatType::kFloat16>(res, probBits, batchSizes);
+      break;
+    case FloatType::kBFloat16:
+      runBatchPointerTest<FloatType::kBFloat16>(res, probBits, batchSizes);
+      break;
+    case FloatType::kFloat32:
+      runBatchPointerTest<FloatType::kFloat32>(res, probBits, batchSizes);
+      break;
+    default:
+      CHECK(false);
+      break;
+  }
 }
 
 void runBatchPointerTest(
@@ -215,7 +262,8 @@ void runBatchPointerTest(
 TEST(FloatTest, Batch) {
   auto res = makeStackMemory();
 
-  for (auto ft : {FloatType::kFloat16, FloatType::kBFloat16}) {
+  for (auto ft :
+       {FloatType::kFloat16, FloatType::kBFloat16, FloatType::kFloat32}) {
     for (auto probBits : {9, 10}) {
       for (auto numInBatch : {1, 3, 16, 23}) {
         runBatchPointerTest(res, ft, probBits, numInBatch);
@@ -232,7 +280,8 @@ TEST(FloatTest, LargeBatch) {
     v = 512 * 1024;
   }
 
-  for (auto ft : {FloatType::kFloat16, FloatType::kBFloat16}) {
+  for (auto ft :
+       {FloatType::kFloat16, FloatType::kBFloat16, FloatType::kFloat32}) {
     runBatchPointerTest(res, ft, 10, batchSizes);
   }
 }
@@ -240,7 +289,8 @@ TEST(FloatTest, LargeBatch) {
 TEST(FloatTest, BatchSize1) {
   auto res = makeStackMemory();
 
-  for (auto ft : {FloatType::kFloat16, FloatType::kBFloat16}) {
+  for (auto ft :
+       {FloatType::kFloat16, FloatType::kBFloat16, FloatType::kFloat32}) {
     for (auto probBits : {9, 10}) {
       runBatchPointerTest(res, ft, probBits, {1});
       runBatchPointerTest(res, ft, probBits, {13, 1});
