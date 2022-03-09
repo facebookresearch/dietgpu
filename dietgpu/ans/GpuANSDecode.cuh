@@ -400,7 +400,7 @@ __global__ void ansDecodeTable(
   auto probs = headerIn->getSymbolProbs();
 
   static_assert(Threads >= kNumSymbols, "");
-  uint32_t pdf = tid < numSymbols ? probs[tid] : 0;
+  uint32_t pdf = tid < kNumSymbols ? probs[tid] : 0;
   uint32_t cdf = 0;
 
   // Get the CDF from the PDF
@@ -418,7 +418,7 @@ __global__ void ansDecodeTable(
   // Broadcast the pdf/cdf values
   __shared__ uint2 smemPdfCdf[kNumSymbols];
 
-  if (tid < numSymbols) {
+  if (tid < kNumSymbols) {
     smemPdfCdf[tid] = uint2{pdf, cdf};
   }
 
@@ -427,16 +427,16 @@ __global__ void ansDecodeTable(
   // Build the table for each pdf/cdf bucket
   constexpr int kWarpsPerBlock = Threads / kWarpSize;
 
-  for (int i = warpId; i < numSymbols; i += kWarpsPerBlock) {
+  for (int i = warpId; i < kNumSymbols; i += kWarpsPerBlock) {
     auto v = smemPdfCdf[i];
 
     auto pdf = v.x;
     auto begin = v.y;
-    auto end = (i + 1) < numSymbols ? (begin + pdf) : totalProb;
+    auto end = begin + pdf;
 
     for (int j = begin + laneId; j < end; j += kWarpSize) {
       table[j] = packDecodeLookup(
-          i + symbolOffset, // symbol
+          i, // symbol
           pdf, // bucket pdf
           j - begin); // within-bucket cdf
     }

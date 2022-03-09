@@ -28,37 +28,56 @@ struct SplitFloat;
 
 template <>
 struct SplitFloat<FloatType::kFloat16> {
-  static __device__ __forceinline__ void
-  split(uint16_t in, uint8_t& comp, uint8_t& nonComp) {
-    nonComp = in & 0xff;
+  static __device__ __forceinline__ void split(
+      typename FloatTypeInfo<FloatType::kFloat16>::WordT in,
+      typename FloatTypeInfo<FloatType::kFloat16>::CompT& comp,
+      typename FloatTypeInfo<FloatType::kFloat16>::NonCompT& nonComp) {
     // don't bother extracting the specific exponent
     comp = in >> 8;
+    nonComp = in & 0xff;
   }
 };
 
 template <>
 struct SplitFloat<FloatType::kBFloat16> {
-  static __device__ __forceinline__ void
-  split(uint16_t in, uint8_t& comp, uint8_t& nonComp) {
+  static __device__ __forceinline__ void split(
+      typename FloatTypeInfo<FloatType::kBFloat16>::WordT in,
+      typename FloatTypeInfo<FloatType::kBFloat16>::CompT& comp,
+      typename FloatTypeInfo<FloatType::kBFloat16>::NonCompT& nonComp) {
     uint32_t v = (uint32_t)in * 65536U + (uint32_t)in;
 
     v = rotateLeft(v, 1);
-    nonComp = v & 0xff;
     comp = v >> 24;
+    nonComp = v & 0xff;
+  }
+};
+
+template <>
+struct SplitFloat<FloatType::kFloat32> {
+  static __device__ __forceinline__ void split(
+      typename FloatTypeInfo<FloatType::kFloat32>::WordT in,
+      typename FloatTypeInfo<FloatType::kFloat32>::CompT& comp,
+      typename FloatTypeInfo<FloatType::kFloat32>::NonCompT& nonComp) {
+    auto v = rotateLeft(in, 1);
+    comp = v >> 24;
+    nonComp = v & 0xffffffU;
   }
 };
 
 template <FloatType FT, int Threads>
 __device__ void splitFloatNonAligned(
-    const uint16_t* in,
+    const typename FloatTypeInfo<FT>::WordT* in,
     uint32_t size,
-    uint8_t* compOut,
-    uint8_t* nonCompOut,
+    typename FloatTypeInfo<FT>::CompT* compOut,
+    typename FloatTypeInfo<FT>::NonCompT* nonCompOut,
     uint32_t* warpHistogram) {
+  using CompT = typename FloatTypeInfo<FT>::CompT;
+  using NonCompT = typename FloatTypeInfo<FT>::NonCompT;
+
   for (uint32_t i = blockIdx.x * blockDim.x + threadIdx.x; i < size;
        i += gridDim.x * blockDim.x) {
-    uint8_t comp;
-    uint8_t nonComp;
+    CompT comp;
+    NonCompT nonComp;
     SplitFloat<FT>::split(in[i], comp, nonComp);
 
     atomicAdd(&warpHistogram[comp], 1);
@@ -69,19 +88,25 @@ __device__ void splitFloatNonAligned(
 }
 
 template <FloatType FT, int Threads>
-__device__ void splitFloatAligned8(
-    const uint16_t* in,
+__device__ void splitFloatAligned16Byte(
+    const typename FloatTypeInfo<FT>::WordT* in,
     uint32_t size,
-    uint8_t* compOut,
-    uint8_t* nonCompOut,
+    typename FloatTypeInfo<FT>::CompT* compOut,
+    typename FloatTypeInfo<FT>::NonCompT* nonCompOut,
     uint32_t* warpHistogram) {
-  constexpr int kOuterUnroll = 2;
-  constexpr int kInnerUnroll = sizeof(uint16x8) / sizeof(uint16_t);
-  static_assert(kInnerUnroll == 8, "");
+  using WordT = typename FloatTypeInfo<FT>::WordT;
+  using CompT = typename FloatTypeInfo<FT>::CompT;
+  using NonCompT = typename FloatTypeInfo<FT>::NonCompT;
+  using VecT = typename FloatTypeInfo<FT>::VecT;
+  using CompVecT = typename FloatTypeInfo<FT>::CompVecT;
+  using NonCompVecT = typename FloatTypeInfo<FT>::NonCompVecT;
 
-  const uint16x8* in8 = (const uint16x8*)in;
-  uint8x8* compOut8 = (uint8x8*)compOut;
-  uint8x8* nonCompOut8 = (uint8x8*)nonCompOut;
+  constexpr int kOuterUnroll = 2;
+  constexpr int kInnerUnroll = sizeof(VecT) / sizeof(WordT);
+
+  const VecT* inV = (const VecT*)in;
+  CompVecT* compOutV = (CompVecT*)compOut;
+  NonCompVecT* nonCompOutV = (NonCompVecT*)nonCompOut;
 
   // Each block handles Threads * kOuterUnroll * kInnerUnroll inputs/outputs at
   // a time, or Threads * kOuterUnroll 16-byte words at a time
@@ -92,30 +117,30 @@ __device__ void splitFloatAligned8(
 
   // Handle by block
   uint32_t startBlock = blockIdx.x * kWordsPerBlock;
-  in8 += startBlock + threadIdx.x;
-  compOut8 += startBlock + threadIdx.x;
-  nonCompOut8 += startBlock + threadIdx.x;
+  inV += startBlock + threadIdx.x;
+  compOutV += startBlock + threadIdx.x;
+  nonCompOutV += startBlock + threadIdx.x;
 
   for (uint32_t b = blockIdx.x; b < fullBlocks; b += gridDim.x,
-                in8 += gridDim.x * kWordsPerBlock,
-                compOut8 += gridDim.x * kWordsPerBlock,
-                nonCompOut8 += gridDim.x * kWordsPerBlock) {
-    uint16x8 v[kOuterUnroll];
+                inV += gridDim.x * kWordsPerBlock,
+                compOutV += gridDim.x * kWordsPerBlock,
+                nonCompOutV += gridDim.x * kWordsPerBlock) {
+    VecT v[kOuterUnroll];
 
 #pragma unroll
     for (uint32_t i = 0; i < kOuterUnroll; ++i) {
-      v[i] = in8[i * Threads];
+      v[i] = inV[i * Threads];
     }
 
-    uint8x8 compV[kOuterUnroll];
-    uint8x8 nonCompV[kOuterUnroll];
+    CompVecT compV[kOuterUnroll];
+    NonCompVecT nonCompV[kOuterUnroll];
 
 #pragma unroll
     for (uint32_t i = 0; i < kOuterUnroll; ++i) {
 #pragma unroll
       for (int j = 0; j < kInnerUnroll; ++j) {
-        uint8_t comp;
-        uint8_t nonComp;
+        CompT comp;
+        NonCompT nonComp;
         SplitFloat<FT>::split(v[i].x[j], comp, nonComp);
 
         atomicAdd(&warpHistogram[comp], 1);
@@ -127,8 +152,8 @@ __device__ void splitFloatAligned8(
 
 #pragma unroll
     for (uint32_t i = 0; i < kOuterUnroll; ++i) {
-      compOut8[i * Threads] = compV[i];
-      nonCompOut8[i * Threads] = nonCompV[i];
+      compOutV[i * Threads] = compV[i];
+      nonCompOutV[i * Threads] = nonCompV[i];
     }
   }
 
@@ -137,8 +162,8 @@ __device__ void splitFloatAligned8(
            fullBlocks * kFloatsPerBlock + blockIdx.x * Threads + threadIdx.x;
        i < size;
        i += blockDim.x) {
-    uint8_t comp;
-    uint8_t nonComp;
+    CompT comp;
+    NonCompT nonComp;
     SplitFloat<FT>::split(in[i], comp, nonComp);
 
     atomicAdd(&warpHistogram[comp], 1);
@@ -155,10 +180,14 @@ template <
     int Threads>
 __global__ void splitFloat(
     InProvider inProvider,
-    uint8_t* __restrict__ compOut,
+    void* __restrict__ compOut,
     uint32_t compOutStride,
     NonCompProvider nonCompProvider,
     uint32_t* __restrict__ histogramOut) {
+  using WordT = typename FloatTypeInfo<FT>::WordT;
+  using CompT = typename FloatTypeInfo<FT>::CompT;
+  using NonCompT = typename FloatTypeInfo<FT>::NonCompT;
+
   constexpr int kWarps = Threads / kWarpSize;
   static_assert(Threads == kNumSymbols, "");
 
@@ -180,9 +209,9 @@ __global__ void splitFloat(
 
   uint32_t* warpHistogram = histogram[warpId];
 
-  auto curIn = (const uint16_t*)inProvider.getBatchStart(batch);
-  auto curNonCompOut = (uint8_t*)nonCompProvider.getBatchStart(batch);
-  auto curCompOut = compOut + compOutStride * batch;
+  auto curIn = (const WordT*)inProvider.getBatchStart(batch);
+  auto headerOut = (GpuFloatHeader*)nonCompProvider.getBatchStart(batch);
+  auto curCompOut = (CompT*)compOut + compOutStride * batch;
   auto curSize = inProvider.getBatchSize(batch);
 
   // Write size as a header
@@ -191,19 +220,19 @@ __global__ void splitFloat(
     h.magic = kGpuFloatHeaderMagic;
     h.size = curSize;
     h.floatType = FT;
-    *((GpuFloatHeader*)curNonCompOut) = h;
+    *headerOut = h;
   }
 
-  curNonCompOut += sizeof(GpuFloatHeader);
+  auto curNonCompOut = (NonCompT*)(headerOut + 1);
 
   // How many bytes are before the point where we are 16 byte aligned?
-  auto nonAlignedBytes = getAlignmentRoundUp<sizeof(uint16x8)>(curIn);
+  auto nonAlignedBytes = getAlignmentRoundUp<sizeof(uint4)>(curIn);
 
   if (nonAlignedBytes > 0) {
     splitFloatNonAligned<FT, Threads>(
         curIn, curSize, curCompOut, curNonCompOut, warpHistogram);
   } else {
-    splitFloatAligned8<FT, Threads>(
+    splitFloatAligned16Byte<FT, Threads>(
         curIn, curSize, curCompOut, curNonCompOut, warpHistogram);
   }
 
@@ -224,13 +253,15 @@ __global__ void splitFloat(
 
 // Update the final byte counts for the batch to take into account the
 // uncompressed and compressed portions
-template <typename InProvider>
+template <FloatType FT, typename InProvider>
 __global__ void
 incOutputSizes(InProvider inProvider, uint32_t* outSize, uint32_t numInBatch) {
   uint32_t batch = blockIdx.x * blockDim.x + threadIdx.x;
   if (batch < numInBatch) {
     outSize[batch] += sizeof(GpuFloatHeader) +
-        roundUp(inProvider.getBatchSize(batch), sizeof(uint4));
+        roundUp(FloatTypeInfo<FT>::kNotCompressed *
+                    inProvider.getBatchSize(batch),
+                sizeof(uint4));
   }
 }
 
@@ -265,7 +296,7 @@ struct FloatANSInProvider {
 };
 
 // Provides the output data to ANS compression
-template <typename OutProvider, typename SizeProvider>
+template <FloatType FT, typename OutProvider, typename SizeProvider>
 struct FloatANSOutProvider {
   using Writer = BatchWriter;
 
@@ -275,21 +306,27 @@ struct FloatANSOutProvider {
       : outProvider_(outProvider), sizeProvider_(sizeProvider) {}
 
   __device__ void* getBatchStart(uint32_t batch) {
+    using FTI = FloatTypeInfo<FT>;
     uint8_t* p = (uint8_t*)outProvider_.getBatchStart(batch);
 
     // Increment the pointer to past the floating point data
     assert(((GpuFloatHeader*)p)->magic == kGpuFloatHeaderMagic);
     return p + sizeof(GpuFloatHeader) +
-        roundUp(sizeProvider_.getBatchSize(batch), sizeof(uint4));
+        roundUp(
+               FTI::kNotCompressed * sizeProvider_.getBatchSize(batch),
+               sizeof(uint4));
   }
 
   __device__ const void* getBatchStart(uint32_t batch) const {
+    using FTI = FloatTypeInfo<FT>;
     const uint8_t* p = (const uint8_t*)outProvider_.getBatchStart(batch);
 
     // Increment the pointer to past the floating point data
     assert(((GpuFloatHeader*)p)->magic == kGpuFloatHeaderMagic);
     return p + sizeof(GpuFloatHeader) +
-        roundUp(sizeProvider_.getBatchSize(batch), sizeof(uint4));
+        roundUp(
+               FTI::kNotCompressed * sizeProvider_.getBatchSize(batch),
+               sizeof(uint4));
   }
 
   __device__ BatchWriter getWriter(uint32_t batch) {
@@ -360,44 +397,67 @@ void floatCompressDevice(
     case kBFloat16:
       RUN_SPLIT(kBFloat16);
       break;
+    case kFloat32:
+      RUN_SPLIT(kFloat32);
+      break;
     default:
       assert(false);
       break;
   }
 
-  // batch is strided, but sizes are original in a device array
-  auto inProviderANS = FloatANSInProvider<InProvider>(
-      toComp_dev.data(), compRowStride, inProvider);
+#undef RUN_SPLIT
+
+    // outSize as reported by ansEncode is just the ANS-encoded portion of the
+    // data.
+    // We need to increment the sizes by the uncompressed portion (header plus
+    // uncompressed float data) with incOutputSizes
+#define RUN_ANS(FT)                                                         \
+  do {                                                                      \
+    auto inProviderANS = FloatANSInProvider<InProvider>(                    \
+        toComp_dev.data(), compRowStride, inProvider);                      \
+                                                                            \
+    auto outProviderANS = FloatANSOutProvider<FT, OutProvider, InProvider>( \
+        outProvider, inProvider);                                           \
+                                                                            \
+    ansEncodeBatchDevice(                                                   \
+        res,                                                                \
+        config.probBits,                                                    \
+        numInBatch,                                                         \
+        inProviderANS,                                                      \
+        histogram_dev.data(),                                               \
+        maxSize,                                                            \
+        outProviderANS,                                                     \
+        outSize_dev,                                                        \
+        stream);                                                            \
+                                                                            \
+    incOutputSizes<FT><<<divUp(numInBatch, 128), 128, 0, stream>>>(         \
+        inProvider, outSize_dev, numInBatch);                               \
+                                                                            \
+  } while (false)
 
   // We have written the non-compressed portions of the floats into the output,
   // along with a header that indicates how many floats there are.
   // For compression, we need to increment the address in which the compressed
   // outputs are written.
-  auto outProviderANS =
-      FloatANSOutProvider<OutProvider, InProvider>(outProvider, inProvider);
 
-  ansEncodeBatchDevice(
-      res,
-      config.probBits,
-      numInBatch,
-      inProviderANS,
-      histogram_dev.data(),
-      maxSize,
-      outProviderANS,
-      outSize_dev,
-      stream);
-
-  // outSize as reported by ansEncode is just the ANS-encoded portion of the
-  // data.
-  // We need to increment the sizes by the uncompressed portion (header plus
-  // uncompressed float data).
-  {
-    uint32_t block = 128;
-    uint32_t grid = divUp(numInBatch, block);
-
-    incOutputSizes<<<grid, block, 0, stream>>>(
-        inProvider, outSize_dev, numInBatch);
+  switch (config.floatType) {
+    case kFloat16:
+      RUN_ANS(FloatType::kFloat16);
+      break;
+    case kBFloat16:
+      RUN_ANS(FloatType::kBFloat16);
+      break;
+    case kFloat32:
+      RUN_ANS(FloatType::kFloat32);
+      break;
+    default:
+      assert(false);
+      break;
   }
+
+#undef RUN_ANS
+
+  {}
 
   CUDA_TEST_ERROR();
 }

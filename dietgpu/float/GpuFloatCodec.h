@@ -18,8 +18,7 @@ enum FloatType {
   kUndefined = 0,
   kFloat16 = 1,
   kBFloat16 = 2,
-  // not yet implemented
-  //  kFloat32 = 3,
+  kFloat32 = 3,
 };
 
 // Returns the maximum possible compressed size in bytes of an array of `size`

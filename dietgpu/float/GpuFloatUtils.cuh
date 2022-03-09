@@ -24,6 +24,10 @@ struct __align__(16) GpuFloatHeader {
 
 static_assert(sizeof(GpuFloatHeader) == 16, "");
 
+struct __align__(16) uint32x4 {
+  uint32_t x[4];
+};
+
 struct __align__(16) uint16x8 {
   uint16_t x[8];
 };
@@ -36,16 +40,83 @@ struct __align__(8) uint8x8 {
   uint8_t x[8];
 };
 
+struct __align__(4) uint8x4 {
+  uint8_t x[4];
+};
+
+// Convert FloatType to word size/type
+template <FloatType FT>
+struct FloatTypeInfo;
+
+template <>
+struct FloatTypeInfo<FloatType::kFloat16> {
+  using WordT = uint16_t;
+  using CompT = uint8_t;
+  using NonCompT = uint8_t;
+
+  // How many bytes are not compressed?
+  static constexpr size_t kNotCompressed = 1;
+
+  // 16 byte vector type
+  using VecT = uint16x8;
+  using CompVecT = uint8x8;
+  using NonCompVecT = uint8x8;
+
+  using Vec4 = uint16x4;
+  using CompVec4 = uint8x4;
+  using NonCompVec4 = uint8x4;
+};
+
+template <>
+struct FloatTypeInfo<FloatType::kBFloat16> {
+  using WordT = uint16_t;
+  using CompT = uint8_t;
+  using NonCompT = uint8_t;
+
+  // How many bytes are not compressed?
+  static constexpr size_t kNotCompressed = 1;
+
+  // 16 byte vector type
+  using VecT = uint16x8;
+  using CompVecT = uint8x8;
+  using NonCompVecT = uint8x8;
+
+  using Vec4 = uint16x4;
+  using CompVec4 = uint8x4;
+  using NonCompVec4 = uint8x4;
+};
+
+template <>
+struct FloatTypeInfo<FloatType::kFloat32> {
+  using WordT = uint32_t;
+  using CompT = uint8_t;
+  using NonCompT = uint32_t;
+
+  // How many bytes are not compressed?
+  // FIXME: pack to 3
+  static constexpr size_t kNotCompressed = 4;
+
+  // 16 byte vector type
+  using VecT = uint32x4;
+  using CompVecT = uint8x4;
+  using NonCompVecT = uint32x4;
+
+  using Vec4 = uint32x4;
+  using CompVec4 = uint8x4;
+  // FIXME
+  using NonCompVec4 = uint32x4;
+};
+
 inline size_t getWordSizeFromFloatType(FloatType ft) {
   switch (ft) {
     case FloatType::kFloat16:
     case FloatType::kBFloat16:
       return sizeof(uint16_t);
-    // case FloatType::kFloat32:
-    //   return sizeof(uint32_t);
+    case FloatType::kFloat32:
+      return sizeof(uint32_t);
     default:
-      CHECK(ft == FloatType::kFloat16 || ft == FloatType::kBFloat16);
-      return sizeof(uint16_t);
+      CHECK(false);
+      return 0;
   }
 }
 
