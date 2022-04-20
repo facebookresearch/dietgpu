@@ -214,8 +214,13 @@ void runBatchPointerTest(
 
   for (int i = 0; i < orig.size(); ++i) {
     if (orig[i] != dec[i]) {
-      std::cout << "mismatch at " << i << " / " << orig.size() << ": "
-                << orig[i] << " " << dec[i] << "\n";
+      printf(
+          "mismatch at %d / %d: 0x%08X 0x%08X\n",
+          i,
+          (int)orig.size(),
+          orig[i],
+          dec[i]);
+      break;
     }
   }
 
@@ -247,13 +252,14 @@ void runBatchPointerTest(
     StackDeviceMemory& res,
     FloatType ft,
     int probBits,
-    int numInBatch) {
+    int numInBatch,
+    uint32_t multipleOf = 1) {
   std::mt19937 gen(10 + numInBatch);
   std::uniform_int_distribution<uint32_t> dist(1, 10000);
 
   auto batchSizes = std::vector<uint32_t>(numInBatch);
   for (auto& v : batchSizes) {
-    v = dist(gen);
+    v = roundUp(dist(gen), multipleOf);
   }
 
   runBatchPointerTest(res, ft, probBits, batchSizes);
@@ -267,6 +273,9 @@ TEST(FloatTest, Batch) {
     for (auto probBits : {9, 10}) {
       for (auto numInBatch : {1, 3, 16, 23}) {
         runBatchPointerTest(res, ft, probBits, numInBatch);
+        // Also test the case where there is uniform 16 byte alignment across
+        // all batches
+        runBatchPointerTest(res, ft, probBits, numInBatch, 16);
       }
     }
   }

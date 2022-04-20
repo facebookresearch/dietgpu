@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cuda.h>
+#include "dietgpu/ans/GpuANSCodec.h"
 
 namespace dietgpu {
 
@@ -31,19 +32,19 @@ uint32_t getMaxFloatCompressedSize(FloatType floatType, uint32_t size);
 
 struct FloatCodecConfig {
   inline FloatCodecConfig()
-      : floatType(FloatType::kFloat16), probBits(10), is16ByteAligned(false) {}
+      : floatType(FloatType::kFloat16), is16ByteAligned(false) {}
 
-  inline FloatCodecConfig(FloatType ft, int pb, bool align)
-      : floatType(ft), probBits(pb), is16ByteAligned(align) {}
+  inline FloatCodecConfig(
+      FloatType ft,
+      const ANSCodecConfig& ansConf,
+      bool align)
+      : floatType(ft), ansConfig(ansConf), is16ByteAligned(align) {}
 
   // What kind of floats are we compressing/decompressing?
   FloatType floatType;
 
-  // What the ANS probability accuracy is; all symbols have quantized
-  // probabilities of 1/2^probBits.
-  // 9, 10, 11 are only valid values. When in doubt, use 10 (e.g., all symbol
-  // probabilities are one of {1/1024, 2/1024, ..., 1023/1024, 1024/1024})
-  int probBits;
+  // ANS entropy coder parameters
+  ANSCodecConfig ansConfig;
 
   // Are all all float input pointers/offsets (compress) or output
   // pointers/offsets (decompress) are aligned to 16 bytes?

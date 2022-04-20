@@ -25,12 +25,12 @@ struct BatchWriter {
     outBlock_[offset] = sym;
   }
 
-  template <typename Vec>
-  inline __device__ void writeVec(uint32_t offset, Vec symV) {
-    ((Vec*)outBlock_)[offset] = symV;
-  }
+  // template <typename Vec>
+  // inline __device__ void writeVec(uint32_t offset, Vec symV) {
+  //   ((Vec*)outBlock_)[offset] = symV;
+  // }
 
-  __device__ void preload(uint32_t offset) {}
+  // __device__ void preload(uint32_t offset) {}
 
   uint8_t* out_;
   uint8_t* outBlock_;

@@ -26,7 +26,7 @@ uint32_t getMaxCompressedSize(uint32_t uncompressedBytes) {
 
 void ansEncodeBatchStride(
     StackDeviceMemory& res,
-    int probBits,
+    const ANSCodecConfig& config,
     uint32_t numInBatch,
     const void* in_dev,
     uint32_t inPerBatchSize,
@@ -42,7 +42,7 @@ void ansEncodeBatchStride(
 
   ansEncodeBatchDevice(
       res,
-      probBits,
+      config,
       numInBatch,
       inProvider,
       histogram_dev,
@@ -54,7 +54,7 @@ void ansEncodeBatchStride(
 
 void ansEncodeBatchPointer(
     StackDeviceMemory& res,
-    int probBits,
+    const ANSCodecConfig& config,
     uint32_t numInBatch,
     const void** in,
     const uint32_t* inSize,
@@ -102,7 +102,7 @@ void ansEncodeBatchPointer(
 
   ansEncodeBatchDevice(
       res,
-      probBits,
+      config,
       numInBatch,
       inProvider,
       histogram_dev,
@@ -114,7 +114,7 @@ void ansEncodeBatchPointer(
 
 void ansEncodeBatchSplitSize(
     StackDeviceMemory& res,
-    int probBits,
+    const ANSCodecConfig& config,
     uint32_t numInBatch,
     const void* in_dev,
     const uint32_t* inSplitSizes,
@@ -168,7 +168,7 @@ void ansEncodeBatchSplitSize(
 
   ansEncodeBatchDevice(
       res,
-      probBits,
+      config,
       numInBatch,
       inProvider,
       histogram_dev,

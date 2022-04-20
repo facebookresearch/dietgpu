@@ -19,7 +19,7 @@ namespace dietgpu {
 
 void ansDecodeBatchStride(
     StackDeviceMemory& res,
-    int probBits,
+    const ANSCodecConfig& config,
     uint32_t numInBatch,
     const void* in_dev,
     uint32_t inPerBatchStride,
@@ -35,7 +35,7 @@ void ansDecodeBatchStride(
 
   ansDecodeBatch(
       res,
-      probBits,
+      config,
       numInBatch,
       inProvider,
       outProvider,
@@ -46,7 +46,7 @@ void ansDecodeBatchStride(
 
 void ansDecodeBatchPointer(
     StackDeviceMemory& res,
-    int probBits,
+    const ANSCodecConfig& config,
     uint32_t numInBatch,
     const void** in,
     void** out,
@@ -66,7 +66,7 @@ void ansDecodeBatchPointer(
 
     ansDecodeBatch(
         res,
-        probBits,
+        config,
         numInBatch,
         inProvider,
         outProvider,
@@ -111,7 +111,7 @@ void ansDecodeBatchPointer(
 
   ansDecodeBatch(
       res,
-      probBits,
+      config,
       numInBatch,
       inProvider,
       outProvider,
@@ -122,7 +122,7 @@ void ansDecodeBatchPointer(
 
 void ansDecodeBatchSplitSize(
     StackDeviceMemory& res,
-    int probBits,
+    const ANSCodecConfig& config,
     uint32_t numInBatch,
     const void** in,
     void* out_dev,
@@ -184,7 +184,7 @@ void ansDecodeBatchSplitSize(
 
   ansDecodeBatch(
       res,
-      probBits,
+      config,
       numInBatch,
       inProvider,
       outProvider,
