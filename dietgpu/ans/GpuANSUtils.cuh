@@ -48,8 +48,7 @@ constexpr ANSStateT kANSStartState = ANSStateT(1)
 constexpr ANSStateT kANSMinState = ANSStateT(1)
     << (kANSStateBits - kANSEncodedBits);
 
-constexpr uint32_t kWarpHeaderMagic = 0x1234f0f0;
-constexpr uint32_t kCoalescedHeaderMagic = 0x5c;
+constexpr uint32_t kCoalescedHeaderMagic = 0xa5;
 
 // Each block of compressed data (either coalesced or uncoalesced) is aligned to
 // this number of bytes and has a valid (if not all used) segment with this

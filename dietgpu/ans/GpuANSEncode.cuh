@@ -211,65 +211,90 @@ __device__ uint32_t ansEncodeWarpBlock(
 // Fully encode a single, full sized block of data, along with the state for
 // that block as the initial header.
 // Returns the number of compressed words (ANSEncodedT) written
+// UseVec4 means that each lane in the warp loads 4 bytes of the input at a
+// time, with each byte compressed by the warp in an interleaved fashion.
+// Such vectorization must match with decom
+template <int ProbBits, int BlockSize, bool UseVec4>
+struct ANSEncodeWarpFullBlock;
+
+// template <int ProbBits, int BlockSize>
+// struct ANSEncodeWarpFullBlock<ProbBits, BlockSize, true> {
+//   static __device__ uint32_t encode(
+//     // Current lane ID in the warp
+//     uint32_t laneId,
+//     // Input for this block
+//     const ANSDecodedT* __restrict__ in,
+//     // encoded table in smem
+//     const uint4* __restrict__ table,
+//     // Output for this block
+//     ANSWarpState* __restrict__ out) {
+//     // where we write the compressed words
+//     ANSEncodedT* outWords = (ANSEncodedT*)(out + 1);
+
+//     // Start state value for this warp
+//     ANSStateT state = kANSStartState;
+
+//     uint32_t outOffset = 0;
+
+//     using VecT = uint32_t;
+
+//     auto inV = (const VecT*)in;
+//     inV += laneId;
+
+//     // kUnroll 4, unroll 2 164.93 us
+//     // kUnroll 8, unroll 0 161.86 us
+//     constexpr int kUnroll = 16;
+
+//     static_assert(
+//       isEvenDivisor((int)BlockSize, (int)(kUnroll * kWarpSize *
+//       sizeof(VecT))),
+//       "");
+
+//     for (int i = 0; i < BlockSize / (kWarpSize * sizeof(VecT));
+//          i += kUnroll, inV += kUnroll * kWarpSize) {
+//       VecT symV[kUnroll];
+
+// #pragma unroll
+//       for (int j = 0; j < kUnroll; ++j) {
+//         symV[j] = inV[j * kWarpSize];
+//       }
+
+// #pragma unroll
+//       for (int j = 0; j < kUnroll; ++j) {
+//         asm volatile("prefetch.global.L2 [%0];" : : "l"(inV + 128 + j * 32));
+// #pragma unroll
+//         for (int k = 0; k < 4; ++k) {
+//           outOffset += encodeOneWarp<ProbBits>(
+//             state, symV[j] & 0xff, outOffset, outWords, table);
+
+//           symV[j] >>= 8;
+//         }
+//       }
+//     }
+
+//     // Write final state at the beginning (aligned addresses)
+//     out->warpState[laneId] = state;
+
+//     // Number of compressed words written
+//     return outOffset;
+//   }
+// };
+
 template <int ProbBits, int BlockSize>
-__device__ uint32_t ansEncodeWarpFullBlock(
-    // Current lane ID in the warp
-    uint32_t laneId,
-    // Input for this block
-    const ANSDecodedT* __restrict__ in,
-    // encoded table in smem
-    const uint4* __restrict__ table,
-    // Output for this block
-    ANSWarpState* __restrict__ out) {
-  // where we write the compressed words
-  ANSEncodedT* outWords = (ANSEncodedT*)(out + 1);
-
-  // Start state value for this warp
-  ANSStateT state = kANSStartState;
-
-  uint32_t outOffset = 0;
-
-  using VecT = uint32_t;
-
-  auto inV = (const VecT*)in;
-  inV += laneId;
-
-  // kUnroll 4, unroll 2 164.93 us
-  // kUnroll 8, unroll 0 161.86 us
-  constexpr int kUnroll = 16;
-
-  static_assert(
-      isEvenDivisor((int)BlockSize, (int)(kUnroll * kWarpSize * sizeof(VecT))),
-      "");
-
-  for (int i = 0; i < BlockSize / (kWarpSize * sizeof(VecT));
-       i += kUnroll, inV += kUnroll * kWarpSize) {
-    VecT symV[kUnroll];
-
-#pragma unroll
-    for (int j = 0; j < kUnroll; ++j) {
-      symV[j] = inV[j * kWarpSize];
-    }
-
-#pragma unroll
-    for (int j = 0; j < kUnroll; ++j) {
-      asm volatile("prefetch.global.L2 [%0];" : : "l"(inV + 128 + j * 32));
-#pragma unroll
-      for (int k = 0; k < 4; ++k) {
-        outOffset += encodeOneWarp<ProbBits>(
-            state, symV[j] & 0xff, outOffset, outWords, table);
-
-        symV[j] >>= 8;
-      }
-    }
+struct ANSEncodeWarpFullBlock<ProbBits, BlockSize, false> {
+  static __device__ uint32_t encode(
+      // Current lane ID in the warp
+      uint32_t laneId,
+      // Input for this block
+      const ANSDecodedT* __restrict__ in,
+      // encoded table in smem
+      const uint4* __restrict__ table,
+      // Output for this block
+      ANSWarpState* __restrict__ out) {
+    // Just use the normal implementation
+    return ansEncodeWarpBlock<ProbBits>(laneId, in, BlockSize, table, out);
   }
-
-  // Write final state at the beginning (aligned addresses)
-  out->warpState[laneId] = state;
-
-  // Number of compressed words written
-  return outOffset;
-}
+};
 
 template <int ProbBits, int BlockSize>
 __device__ void ansEncodeBlocksFull(
@@ -321,7 +346,7 @@ __device__ void ansEncodeBlocksFull(
   // all input blocks must meet alignment requirements
   assert(isPointerAligned(inBlock, kANSRequiredAlignment));
 
-  auto outWords = ansEncodeWarpFullBlock<ProbBits, BlockSize>(
+  auto outWords = ANSEncodeWarpFullBlock<ProbBits, BlockSize, false>::encode(
       laneId, inBlock, smemLookup, outBlock);
 
   if (laneId == 0) {
@@ -638,7 +663,7 @@ __global__ void ansEncodeCoalesceBatch(
 template <typename InProvider, typename OutProvider>
 void ansEncodeBatchDevice(
     StackDeviceMemory& res,
-    int probBits,
+    const ANSCodecConfig& config,
     uint32_t numInBatch,
     InProvider inProvider,
     const uint32_t* histogram_dev,
@@ -658,7 +683,7 @@ void ansEncodeBatchDevice(
     // use pre-calculated histogram
     ansCalcWeights(
         numInBatch,
-        probBits,
+        config.probBits,
         inProvider,
         histogram_dev,
         minAndNumSymbols_dev.data(),
@@ -673,7 +698,7 @@ void ansEncodeBatchDevice(
 
     ansCalcWeights(
         numInBatch,
-        probBits,
+        config.probBits,
         inProvider,
         tempHistogram_dev.data(),
         minAndNumSymbols_dev.data(),
@@ -711,26 +736,28 @@ void ansEncodeBatchDevice(
     // in the batch
     auto gridPartial = dim3(1, numInBatch);
 
-#define RUN_ENCODE(BITS)                                     \
-  ansEncodeBatchFull<InProvider, BITS, kDefaultBlockSize>    \
-      <<<gridFull, kThreads, 0, stream>>>(                   \
-          inProvider,                                        \
-          maxNumCompressedBlocks,                            \
-          uncoalescedBlockStride,                            \
-          compressedBlocks_dev.data(),                       \
-          compressedWords_dev.data(),                        \
-          table_dev.data());                                 \
-                                                             \
-  ansEncodeBatchPartial<InProvider, BITS, kDefaultBlockSize> \
-      <<<gridPartial, kThreads, 0, stream>>>(                \
-          inProvider,                                        \
-          maxNumCompressedBlocks,                            \
-          uncoalescedBlockStride,                            \
-          compressedBlocks_dev.data(),                       \
-          compressedWords_dev.data(),                        \
-          table_dev.data());
+#define RUN_ENCODE(BITS)                                       \
+  do {                                                         \
+    ansEncodeBatchFull<InProvider, BITS, kDefaultBlockSize>    \
+        <<<gridFull, kThreads, 0, stream>>>(                   \
+            inProvider,                                        \
+            maxNumCompressedBlocks,                            \
+            uncoalescedBlockStride,                            \
+            compressedBlocks_dev.data(),                       \
+            compressedWords_dev.data(),                        \
+            table_dev.data());                                 \
+                                                               \
+    ansEncodeBatchPartial<InProvider, BITS, kDefaultBlockSize> \
+        <<<gridPartial, kThreads, 0, stream>>>(                \
+            inProvider,                                        \
+            maxNumCompressedBlocks,                            \
+            uncoalescedBlockStride,                            \
+            compressedBlocks_dev.data(),                       \
+            compressedWords_dev.data(),                        \
+            table_dev.data());                                 \
+  } while (false)
 
-    switch (probBits) {
+    switch (config.probBits) {
       case 9:
         RUN_ENCODE(9);
         break;
@@ -741,7 +768,7 @@ void ansEncodeBatchDevice(
         RUN_ENCODE(11);
         break;
       default:
-        CHECK(false) << "unhandled pdf precision " << probBits;
+        CHECK(false) << "unhandled pdf precision " << config.probBits;
     }
 
 #undef RUN_ENCODE
@@ -797,7 +824,7 @@ void ansEncodeBatchDevice(
             compressedWords_dev.data(),
             compressedWordsPrefix_dev.data(),
             table_dev.data(),
-            probBits,
+            config.probBits,
             minAndNumSymbols_dev.data(),
             outProvider,
             outSize_dev);

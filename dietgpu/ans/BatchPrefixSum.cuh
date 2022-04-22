@@ -14,6 +14,10 @@
 
 namespace dietgpu {
 
+// FIXME: at some point, batchExclusivePrefixSum1 can no longer be run with
+// 1024 threads. Restrict our max threads to 512
+constexpr int kMaxBEPSThreads = 512;
+
 //
 // Quick and dirty means of performing a batched exclusive prefix sum in two
 // passes :(
@@ -42,7 +46,7 @@ __global__ void batchExclusivePrefixSum1(
   bool valid = batchIdx < batchSize;
 
   int totalIdx = batch * batchSize + batchIdx;
-  auto v = valid ? fn(in[totalIdx]) : 0;
+  auto v = valid ? fn(in[totalIdx]) : T(0);
 
   using Scan = cub::BlockScan<T, Threads>;
   __shared__ typename Scan::TempStorage smem;
@@ -108,11 +112,11 @@ __global__ void batchExclusivePrefixSum3(
 inline size_t getBatchExclusivePrefixSumTempSize(
     uint32_t numInBatch,
     uint32_t batchSize) {
-  if (batchSize <= 1024) {
+  if (batchSize <= kMaxBEPSThreads) {
     return 0;
   } else {
     // number of blocks required
-    return divUp(batchSize, 1024);
+    return divUp(batchSize, kMaxBEPSThreads);
   }
 }
 
@@ -128,7 +132,7 @@ void batchExclusivePrefixSum(
     const TransformFn& fn,
     cudaStream_t stream) {
   // maximum size we can handle with a two-level reduction
-  assert(batchSize <= 1024 * 1024);
+  assert(batchSize <= kMaxBEPSThreads * kMaxBEPSThreads);
 
 #define BPS_LEVEL_1(THREADS, TEMP)                        \
   batchExclusivePrefixSum1<T, THREADS, TransformFn>       \
@@ -144,13 +148,13 @@ void batchExclusivePrefixSum(
       <<<dim3(blocks, numInBatch), THREADS, 0, stream>>>( \
           out_dev, temp_dev, batchSize)
 
-  if (batchSize > 1024) {
+  if (batchSize > kMaxBEPSThreads) {
     // multi-level reduction required
-    uint32_t blocks = divUp(batchSize, 1024);
+    uint32_t blocks = divUp(batchSize, kMaxBEPSThreads);
     assert(blocks > 1);
     assert(temp_dev); // must have this allocated
 
-    BPS_LEVEL_1(1024, temp_dev);
+    BPS_LEVEL_1(kMaxBEPSThreads, temp_dev);
 
     if (blocks <= 32) {
       BPS_LEVEL_2(32);
@@ -160,14 +164,12 @@ void batchExclusivePrefixSum(
       BPS_LEVEL_2(128);
     } else if (blocks <= 256) {
       BPS_LEVEL_2(256);
-    } else if (blocks <= 512) {
-      BPS_LEVEL_2(512);
     } else {
-      assert(blocks <= 1024);
-      BPS_LEVEL_2(1024);
+      assert(blocks <= kMaxBEPSThreads);
+      BPS_LEVEL_2(kMaxBEPSThreads);
     }
 
-    BPS_LEVEL_3(1024);
+    BPS_LEVEL_3(kMaxBEPSThreads);
   } else {
     // single-level reduction
     uint32_t blocks = 1;
@@ -180,11 +182,9 @@ void batchExclusivePrefixSum(
       BPS_LEVEL_1(128, (T*)nullptr);
     } else if (batchSize <= 256) {
       BPS_LEVEL_1(256, (T*)nullptr);
-    } else if (batchSize <= 512) {
-      BPS_LEVEL_1(512, (T*)nullptr);
     } else {
-      assert(batchSize <= 1024);
-      BPS_LEVEL_1(1024, (T*)nullptr);
+      assert(batchSize <= kMaxBEPSThreads);
+      BPS_LEVEL_1(kMaxBEPSThreads, (T*)nullptr);
     }
   }
 
