@@ -311,16 +311,12 @@ __global__ __launch_bounds__(128) void ansDecodeKernel(
   auto headerIn = (const ANSCoalescedHeader*)inProvider.getBatchStart(batch);
   headerIn->checkMagic();
 
-  auto data0 = headerIn->data0;
-  auto numBlocks = data0.x & 0xffffffU;
-  auto totalUncompressedWords = data0.y;
+  auto header = *headerIn;
+  auto numBlocks = header.numBlocks();
+  auto totalUncompressedWords = header.totalUncompressedWords();
 
-  uint32_t symbolOffset;
-  uint32_t probBits;
-  uint32_t numSymbols;
-  unpackSymbolInfo(data0.w, symbolOffset, probBits, numSymbols);
   // Is the data what we expect?
-  assert(ProbBits == probBits);
+  assert(ProbBits == header.probBits());
 
   // Do we have enough space for the decompressed data?
   auto uncompressedBytes = totalUncompressedWords * sizeof(ANSDecodedT);
@@ -405,28 +401,26 @@ __global__ __launch_bounds__(128) void ansDecodeKernel(
 template <typename BatchProvider, int Threads>
 __global__ void ansDecodeTable(
     BatchProvider inProvider,
-    uint32_t expectedProbBits,
+    uint32_t probBits,
     TableT* __restrict__ table) {
   int batch = blockIdx.x;
   int tid = threadIdx.x;
   int warpId = tid / kWarpSize;
   int laneId = getLaneId();
 
-  table += batch * (1 << expectedProbBits);
+  table += batch * (1 << probBits);
   auto headerIn = (const ANSCoalescedHeader*)inProvider.getBatchStart(batch);
 
+  auto header = *headerIn;
+
   // Is this an expected header?
-  headerIn->checkMagic();
+  header.checkMagic();
 
-  uint32_t symbolOffset;
-  uint32_t probBits;
-  uint32_t numSymbols;
-  unpackSymbolInfo(headerIn->symbolInfo(), symbolOffset, probBits, numSymbols);
-  assert(probBits == expectedProbBits);
+  // Is our probability resolution what we expected?
+  assert(header.probBits() == probBits);
 
-  if (numSymbols == 0) {
-    // compressed empty array
-    assert(headerIn->totalUncompressedWords() == 0);
+  if (header.totalUncompressedWords() == 0) {
+    // nothing to do; compressed empty array
     return;
   }
 

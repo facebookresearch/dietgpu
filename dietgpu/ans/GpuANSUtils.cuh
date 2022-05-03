@@ -60,32 +60,9 @@ struct ANSWarpState {
   ANSStateT warpState[kWarpSize];
 };
 
-inline __host__ __device__ uint32_t
-packSymbolInfo(uint32_t symbolOffset, uint32_t probBits, uint32_t numSymbols) {
-  uint32_t v = numSymbols;
-  v <<= 8;
-  v |= probBits;
-  v <<= 8;
-  v |= symbolOffset;
-
-  return v;
-}
-
-inline __host__ __device__ void unpackSymbolInfo(
-    uint32_t v,
-    uint32_t& symbolOffset,
-    uint32_t& probBits,
-    uint32_t& numSymbols) {
-  symbolOffset = (v & 0xffU);
-  v >>= 8;
-  probBits = (v & 0xffU);
-  v >>= 8;
-  numSymbols = v;
-}
-
-struct ANSCoalescedHeader {
-  static __host__ __device__ uint32_t
-  getCompressedOverhead(uint32_t numBlocks) {
+struct __align__(16) ANSCoalescedHeader {
+  static __host__ __device__ uint32_t getCompressedOverhead(
+      uint32_t numBlocks) {
     constexpr int kAlignment = kBlockAlignment / sizeof(uint2) == 0
         ? 1
         : kBlockAlignment / sizeof(uint2);
@@ -142,12 +119,12 @@ struct ANSCoalescedHeader {
     data0.z = words;
   }
 
-  __host__ __device__ uint32_t symbolInfo() const {
+  __host__ __device__ uint32_t probBits() const {
     return data0.w;
   }
 
-  __host__ __device__ void setSymbolInfo(uint32_t info) {
-    data0.w = info;
+  __host__ __device__ void setProbBits(uint32_t bits) {
+    data0.w = bits;
   }
 
   __device__ uint16_t* getSymbolProbs() {
@@ -197,7 +174,7 @@ struct ANSCoalescedHeader {
   // x: (8: magic)(24: numBlocks)
   // y: totalUncompressedWords
   // z: totalCompressedWords
-  // w: symbolInfo
+  // w: probBits
   uint4 data0;
 
   // Fixed length array

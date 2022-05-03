@@ -158,7 +158,7 @@ struct SplitFloatAligned16 {
     for (uint32_t i =
              fullBlocks * kFloatsPerBlock + blockIdx.x * Threads + threadIdx.x;
          i < size;
-         i += blockDim.x) {
+         i += gridDim.x * Threads) {
       CompT comp;
       NonCompT nonComp;
       FTI::split(in[i], comp, nonComp);
@@ -262,7 +262,7 @@ struct SplitFloatAligned16<FloatType::kFloat32, Threads> {
     for (uint32_t i =
              fullBlocks * kFloatsPerBlock + blockIdx.x * Threads + threadIdx.x;
          i < size;
-         i += blockDim.x) {
+         i += gridDim.x * Threads) {
       CompT comp;
       NonCompT nonComp;
       FTI::split(in[i], comp, nonComp);
@@ -273,41 +273,6 @@ struct SplitFloatAligned16<FloatType::kFloat32, Threads> {
       nonCompOut2[i] = nonComp & 0xffffU;
       nonCompOut1[i] = nonComp >> 16;
     }
-  }
-};
-
-template <FloatType FT, int Threads>
-struct SplitFloatImpl {
-  static __device__ void split(
-      const typename FloatTypeInfo<FT>::WordT* in,
-      uint32_t size,
-      typename FloatTypeInfo<FT>::CompT* compOut,
-      typename FloatTypeInfo<FT>::NonCompT* nonCompOut,
-      uint32_t* histogram) {
-    // How many bytes are before the point where we are 16 byte aligned?
-    auto nonAlignedBytes = getAlignmentRoundUp<sizeof(uint4)>(in);
-
-    if (nonAlignedBytes > 0) {
-      SplitFloatNonAligned<FT, Threads>::split(
-          in, size, compOut, nonCompOut, histogram);
-    } else {
-      SplitFloatAligned16<FT, Threads>::split(
-          in, size, compOut, nonCompOut, histogram);
-    }
-  }
-};
-
-template <int Threads>
-struct SplitFloatImpl<FloatType::kFloat32, Threads> {
-  static __device__ void split(
-      const typename FloatTypeInfo<FloatType::kFloat32>::WordT* in,
-      uint32_t size,
-      typename FloatTypeInfo<FloatType::kFloat32>::CompT* compOut,
-      typename FloatTypeInfo<FloatType::kFloat32>::NonCompT* nonCompOut,
-      uint32_t* histogram) {
-    // FIXME: implement vectorization
-    SplitFloatNonAligned<FloatType::kFloat32, Threads>::split(
-        in, size, compOut, nonCompOut, histogram);
   }
 };
 
@@ -363,8 +328,16 @@ __global__ void splitFloat(
 
   auto curNonCompOut = (NonCompT*)(headerOut + 1);
 
-  SplitFloatImpl<FT, Threads>::split(
-      curIn, curSize, curCompOut, curNonCompOut, warpHistogram);
+  // How many bytes are before the point where we are 16 byte aligned?
+  auto nonAlignedBytes = getAlignmentRoundUp<sizeof(uint4)>(curIn);
+
+  if (nonAlignedBytes > 0) {
+    SplitFloatNonAligned<FT, Threads>::split(
+        curIn, curSize, curCompOut, curNonCompOut, warpHistogram);
+  } else {
+    SplitFloatAligned16<FT, Threads>::split(
+        curIn, curSize, curCompOut, curNonCompOut, warpHistogram);
+  }
 
   // Accumulate warp histogram data and write into the gmem histogram
   __syncthreads();

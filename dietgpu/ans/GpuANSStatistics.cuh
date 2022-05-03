@@ -142,98 +142,55 @@ __global__ void histogramBatch(InProvider in, uint32_t* out) {
       (const ANSDecodedT*)in.getBatchStart(batch), in.getBatchSize(batch), out);
 }
 
-template <typename T>
-struct Identity;
-
-template <>
-struct Identity<int> {
-  static constexpr int kMin = std::numeric_limits<int>::max();
-  static constexpr int kMax = std::numeric_limits<int>::min();
-  static constexpr int kSum = 0;
-};
-
+// sum that allows passing in smem for usage, so as to avoid a trailing
+// syncthreads and associated latency
 template <int Threads>
-__device__ inline void statsReduce(
-    int warpId,
-    int laneId,
-    int valForMin,
-    int valForMax,
-    int valForSum,
-    int& minOut,
-    int& maxOut,
-    int& sumOut) {
+__device__ inline int
+blockSum(int warpId, int laneId, int valForSum, int* smem) {
   static_assert(isEvenDivisor(Threads, kWarpSize), "");
   constexpr int kWarps = Threads / kWarpSize;
 
-  auto allMin = warpReduceAllMin(valForMin);
-  auto allMax = warpReduceAllMax(valForMax);
   auto allSum = warpReduceAllSum(valForSum);
 
-  __shared__ int smemMin[kWarps];
-  __shared__ int smemMax[kWarps];
-  __shared__ int smemSum[kWarps];
-
   if (laneId == 0) {
-    smemMin[warpId] = allMin;
-    smemMax[warpId] = allMax;
-    smemSum[warpId] = allSum;
+    smem[warpId] = allSum;
   }
   __syncthreads();
 
   if (warpId == 0) {
-    int v = laneId < kWarps ? smemMin[laneId] : Identity<int>::kMin;
-    v = warpReduceAllMin(v);
-
-    if (laneId == 0) {
-      smemMin[0] = v;
-    }
-  } else if (warpId == 1) {
-    int v = laneId < kWarps ? smemMax[laneId] : Identity<int>::kMax;
-    v = warpReduceAllMax(v);
-
-    if (laneId == 0) {
-      smemMax[0] = v;
-    }
-  } else if (warpId == 2) {
-    int v = laneId < kWarps ? smemSum[laneId] : Identity<int>::kSum;
+    int v = laneId < kWarps ? smem[laneId] : 0;
     v = warpReduceAllSum(v);
 
     if (laneId == 0) {
-      smemSum[0] = v;
+      smem[0] = v;
     }
   }
 
   __syncthreads();
 
-  // read broadcast values
-  minOut = smemMin[0];
-  maxOut = smemMax[0];
-  sumOut = smemSum[0];
+  // trailing syncthreads is elsewhere
+  return smem[0];
 }
 
-template <typename SizeProvider, int Threads>
-__global__ void quantizeWeights(
+// Function that allows normalization of symbol probabilities with a varying
+// (statically known) number of threads, to allow for kernel fusion as needed
+// Stand-alone normalization will use Threads == kNumSymbols (256)
+template <int Threads>
+__device__ void normalizeProbabilitiesFromHistogram(
+    // Size 256 histogram in gmem
     const uint32_t* __restrict__ counts,
-    SizeProvider sizeProvider,
+    uint32_t totalNum,
     int probBits,
-    uint2* __restrict__ minAndNumSymbols,
     uint4* __restrict__ table) {
-  static_assert(kNumSymbols <= Threads);
+  static_assert(
+      kNumSymbols == Threads || isEvenDivisor(kNumSymbols, uint32_t(Threads)),
+      "");
 
-  // get to the right batch set of data
-  int batch = blockIdx.x;
-  minAndNumSymbols += batch;
-  counts += batch * kNumSymbols;
-  table += batch * kNumSymbols;
-
-  uint32_t totalSize = sizeProvider.getBatchSize(batch);
+  constexpr int kNumSymPerThread =
+      kNumSymbols == Threads ? 1 : (kNumSymbols / Threads);
 
   // There's nothing to do if the input array in the batch was of zero size
-  if (totalSize == 0) {
-    if (threadIdx.x == 0) {
-      *minAndNumSymbols = uint2{0U, 0U};
-    }
-
+  if (totalNum == 0) {
     return;
   }
 
@@ -243,82 +200,97 @@ __global__ void quantizeWeights(
   int warpId = tid / kWarpSize;
   int laneId = getLaneId();
 
-  // Load the current count and compute the min/max non-zero values
-  uint32_t count = counts[tid];
-  bool symPresent = count > 0;
+  // Load the current count and compute the min/max non-zero values, then
+  // perform an approximate quantization
+  uint32_t qProb[kNumSymPerThread];
 
-  int minSym = symPresent ? tid : 0xffff;
-  int maxSym = symPresent ? tid : -1;
+  int qProbSum = 0;
 
-  // Perform an approximate quantization using the above values
-  uint32_t qProb = kProbWeight * ((float)count / (float)totalSize);
+#pragma unroll
+  for (int i = 0; i < kNumSymPerThread; ++i) {
+    int curSym = i * Threads + tid;
+    uint32_t count = counts[curSym];
 
-  // All weights for symbols present must be at least one
-  qProb = (count > 0 && qProb == 0) ? 1 : qProb;
+    // Rough initial quantization
+    qProb[i] = kProbWeight * ((float)count / (float)totalNum);
 
-  int qProbSum;
-  statsReduce<Threads>(
-      warpId, laneId, minSym, maxSym, qProb, minSym, maxSym, qProbSum);
+    // All weights for symbols present must be > 0
+    qProb[i] = (count > 0 && qProb[i] == 0) ? 1 : qProb[i];
 
-  int numSymbols = maxSym - minSym + 1;
+    qProbSum += qProb[i];
+  }
+
+  // Sum qProbSym across all threads
+  __shared__ int smemSum[kWarps];
+  qProbSum = blockSum<Threads>(warpId, laneId, qProbSum, smemSum);
 
   // In order to use radix sorting, and also in order to only sort a single
   // word, pack both the weight and index into a single integer
-  uint32_t sortedPair = (qProb << 16) | tid /* symbol */;
+  uint32_t sortedPair[kNumSymPerThread];
 
-  using Sort = cub::BlockRadixSort<uint32_t, Threads, 1>;
-  __shared__ typename Sort::TempStorage smemSort;
-
-  {
-    uint32_t toSort[1];
-    toSort[0] = sortedPair;
-    Sort(smemSort).SortDescending(toSort);
-    sortedPair = toSort[0];
+#pragma unroll
+  for (int i = 0; i < kNumSymPerThread; ++i) {
+    int curSym = i * Threads + tid;
+    sortedPair[i] = (qProb[i] << 16) | curSym;
   }
+
+  // The sort assumes a blocked arrangement as input, which we don't have, but
+  // this doesn't matter as we only care about the arrangement post-sort
+  using Sort = cub::BlockRadixSort<uint32_t, Threads, kNumSymPerThread>;
+  __shared__ typename Sort::TempStorage smemSort;
+  Sort(smemSort).SortDescending(sortedPair);
 
   // The (prob, symbol) pair that each thread is considered to
   // hold is the following:
-  uint32_t tidSymbol = sortedPair & 0xffff;
-  qProb = sortedPair >> 16;
+  uint32_t tidSymbol[kNumSymPerThread];
 
+  // Recover the values
+#pragma unroll
+  for (int i = 0; i < kNumSymPerThread; ++i) {
+    tidSymbol[i] = sortedPair[i] & 0xffffU;
+    qProb[i] = sortedPair[i] >> 16;
+  }
+
+  // How far below (positive) or above (negative) our current first-pass
+  // quantization is from our target sum 2^probBits
   int diff = (int)kProbWeight - (int)qProbSum;
 
   if (diff > 0) {
-    // add to largest values
+    // We are below our total sum target; add 1 to largest values
     // FIXME: use div/mod to avoid iterations
     while (diff > 0) {
-      int iterToApply = diff < numSymbols ? diff : numSymbols;
+      int iterToApply = diff < kNumSymbols ? diff : kNumSymbols;
 
-      if (tid < iterToApply) {
-        qProb += 1;
+#pragma unroll
+      for (int i = 0; i < kNumSymPerThread; ++i) {
+        int curSym = tidSymbol[i];
+        if (curSym < iterToApply) {
+          qProb[i] += 1;
+        }
       }
 
       diff -= iterToApply;
     }
   } else if (diff < 0) {
+    // We are above our total sum target; subtract 1 from the smallest values
+    // that are > 1 (all symbols with a weight of 1 cannot go to zero as they
+    // are assumed present in the input)
     diff = -diff;
 
     while (diff > 0) {
+      // Need to determine the number of
+      int qNumGt1s = 0;
+
+#pragma unroll
+      for (int i = 0; i < kNumSymPerThread; ++i) {
+        qNumGt1s += (int)(qProb[i] > 1);
+      }
+
       // We need to determine the remaining number of >1 values
-      // FIXME: clean up
-      int qNumGt1s = warpReduceAllSum((int)(qProb > 1));
-      __shared__ int smemSum2[kWarps];
-
-      if (laneId == 0) {
-        smemSum2[warpId] = qNumGt1s;
-      }
-      __syncthreads();
-
-      if (warpId == 0) {
-        qNumGt1s = laneId < kWarps ? smemSum2[laneId] : 0;
-        qNumGt1s = warpReduceAllSum(qNumGt1s);
-        if (laneId == 0) {
-          smemSum2[0] = qNumGt1s;
-        }
-      }
-      __syncthreads();
-
-      qNumGt1s = smemSum2[0];
+      // We reuse smemSum but there is a syncthreads in the sort above, and at
+      // the end of the loop below
+      qNumGt1s = blockSum<Threads>(warpId, laneId, qNumGt1s, smemSum);
+      __syncthreads(); // FIXME: not needed?
 
       // subtract from smallest >1 values
       // This should be the index of the first 1 value
@@ -327,8 +299,13 @@ __global__ void quantizeWeights(
       assert(iterToApply > 0);
       int startIndex = qNumGt1s - iterToApply;
 
-      if (tid >= startIndex && tid < qNumGt1s) {
-        qProb -= 1;
+#pragma unroll
+      for (int i = 0; i < kNumSymPerThread; ++i) {
+        // Post-sort, the data is in a blocked arrangement
+        int curSym = tid * kNumSymPerThread + i;
+        if (curSym >= startIndex && curSym < qNumGt1s) {
+          qProb[i] -= 1;
+        }
       }
 
       diff -= iterToApply;
@@ -340,31 +317,68 @@ __global__ void quantizeWeights(
   // Recover the pre-sort order
   __shared__ uint32_t smemPdf[kNumSymbols];
 
-  smemPdf[tidSymbol] = qProb;
+#pragma unroll
+  for (int i = 0; i < kNumSymPerThread; ++i) {
+    smemPdf[tidSymbol[i]] = qProb[i];
+  }
 
   __syncthreads();
 
-  uint32_t symPdf = smemPdf[tid];
+  // NOTE: we need to have a contiguous blocked arrangement for cub::BlockScan
+  // when kNumSymPerThread > 1, so the order is now tid * kNumSymPerThread + reg
+  uint32_t symPdf[kNumSymPerThread];
+#pragma unroll
+  for (int i = 0; i < kNumSymPerThread; ++i) {
+    int curSym = tid * kNumSymPerThread + i;
+    symPdf[i] = smemPdf[curSym];
+  }
 
   using Scan = cub::BlockScan<uint32_t, Threads>;
   __shared__ typename Scan::TempStorage smemScan;
 
-  uint32_t symCdf = 0;
+  // FIXME: initialize to 0?
+  uint32_t symCdf[kNumSymPerThread];
   Scan(smemScan).ExclusiveSum(symPdf, symCdf);
 
   // Compute divisor information (constant division via integer
   // multiplication + shift)
-  uint32_t shift = 32 - __clz(symPdf - 1);
+  uint32_t shift[kNumSymPerThread];
+  uint32_t magic[kNumSymPerThread];
 
-  constexpr uint64_t one = 1;
-  uint64_t magic = ((one << 32) * ((one << shift) - symPdf)) / symPdf + 1;
+#pragma unroll
+  for (int i = 0; i < kNumSymPerThread; ++i) {
+    shift[i] = 32 - __clz(symPdf[i] - 1);
 
-  // magic should be able to fit
-  table[tid] = uint4{symPdf, symCdf, (uint32_t)magic, shift};
+    constexpr uint64_t one = 1;
+    uint64_t magic64 =
+        ((one << 32) * ((one << shift[i]) - symPdf[i])) / symPdf[i] + 1;
 
-  if (tid == 0) {
-    *minAndNumSymbols = uint2{(uint32_t)minSym, (uint32_t)numSymbols};
+    // should not overflow
+    magic[i] = (uint32_t)magic64;
   }
+
+#pragma unroll
+  for (int i = 0; i < kNumSymPerThread; ++i) {
+    // Same blocked contiguous ordering as before
+    // Note that this is no longer a coalesced write
+    int curSym = tid * kNumSymPerThread + i;
+    table[curSym] = uint4{symPdf[i], symCdf[i], magic[i], shift[i]};
+  }
+}
+
+template <typename SizeProvider, int Threads>
+__global__ void quantizeWeights(
+    const uint32_t* __restrict__ counts,
+    SizeProvider sizeProvider,
+    int probBits,
+    uint4* __restrict__ table) {
+  int batch = blockIdx.x;
+
+  normalizeProbabilitiesFromHistogram<Threads>(
+      counts + batch * kNumSymbols,
+      sizeProvider.getBatchSize(batch),
+      probBits,
+      table + batch * kNumSymbols);
 }
 
 template <typename InProvider>
@@ -405,19 +419,14 @@ inline void ansCalcWeights(
     SizeProvider sizeProvider,
     // size numInBatch * kNumSymbols
     const uint32_t* histogram_dev,
-    // size numInBatch
-    uint2* minAndNumSymbols_dev,
     // size numInBatch * kNumSymbols
     uint4* table_dev,
     cudaStream_t stream) {
-  // Quantize weights and determine division factors
-  quantizeWeights<SizeProvider, kNumSymbols>
-      <<<numInBatch, kNumSymbols, 0, stream>>>(
-          histogram_dev,
-          sizeProvider,
-          probBits,
-          minAndNumSymbols_dev,
-          table_dev);
+  // Quantize weights and determine integer ANS division factors
+  constexpr int kThreads = kNumSymbols;
+
+  quantizeWeights<SizeProvider, kThreads><<<numInBatch, kThreads, 0, stream>>>(
+      histogram_dev, sizeProvider, probBits, table_dev);
 }
 
 } // namespace dietgpu

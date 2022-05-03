@@ -516,7 +516,6 @@ __device__ void ansEncodeCoalesce(
     uint32_t probBits,
     uint32_t numBlocks,
     uint32_t uncompressedWords,
-    const uint2* __restrict__ minAndNumSymbols,
     uint8_t* __restrict__ out,
     uint32_t* __restrict__ compressedBytes) {
   int block = blockIdx.x;
@@ -526,10 +525,6 @@ __device__ void ansEncodeCoalesce(
 
   // The first block will be responsible for the coalesced header
   if (block == 0) {
-    uint2 minNumSym = minAndNumSymbols[0];
-    uint32_t minSymbol = minNumSym.x;
-    uint32_t numSymbols = minNumSym.y;
-
     if (tid == 0) {
       uint32_t totalCompressedWords = 0;
 
@@ -551,7 +546,7 @@ __device__ void ansEncodeCoalesce(
       header.setNumBlocks(numBlocks);
       header.setUncompressedWords(uncompressedWords);
       header.setCompressedWords(totalCompressedWords);
-      header.setSymbolInfo(packSymbolInfo(minSymbol, probBits, numSymbols));
+      header.setProbBits(probBits);
 
       if (compressedBytes) {
         *compressedBytes = header.getTotalCompressedSize();
@@ -628,7 +623,6 @@ __global__ void ansEncodeCoalesceBatch(
     const uint32_t* __restrict__ compressedWordsPrefix,
     const uint4* __restrict__ table,
     uint32_t probBits,
-    const uint2* __restrict__ minAndNumSymbols,
     OutProvider outProvider,
     uint32_t* __restrict__ compressedBytes) {
   int batch = blockIdx.y;
@@ -644,7 +638,6 @@ __global__ void ansEncodeCoalesceBatch(
   compressedWordsPrefix += batch * maxNumCompressedBlocks;
   compressedBytes += batch;
   table += batch * kNumSymbols;
-  minAndNumSymbols += batch;
 
   ansEncodeCoalesce<Threads>(
       inUncoalescedBlocks,
@@ -655,7 +648,6 @@ __global__ void ansEncodeCoalesceBatch(
       probBits,
       numBlocks,
       uncompressedWords,
-      minAndNumSymbols,
       (uint8_t*)outProvider.getBatchStart(batch),
       compressedBytes);
 }
@@ -676,7 +668,6 @@ void ansEncodeBatchDevice(
       divUp(maxUncompressedWords, kDefaultBlockSize);
 
   // 1. Compute symbol statistics
-  auto minAndNumSymbols_dev = res.alloc<uint2>(stream, numInBatch);
   auto table_dev = res.alloc<uint4>(stream, numInBatch * kNumSymbols);
 
   if (histogram_dev) {
@@ -686,7 +677,6 @@ void ansEncodeBatchDevice(
         config.probBits,
         inProvider,
         histogram_dev,
-        minAndNumSymbols_dev.data(),
         table_dev.data(),
         stream);
   } else {
@@ -701,7 +691,6 @@ void ansEncodeBatchDevice(
         config.probBits,
         inProvider,
         tempHistogram_dev.data(),
-        minAndNumSymbols_dev.data(),
         table_dev.data(),
         stream);
   }
@@ -825,7 +814,6 @@ void ansEncodeBatchDevice(
             compressedWordsPrefix_dev.data(),
             table_dev.data(),
             config.probBits,
-            minAndNumSymbols_dev.data(),
             outProvider,
             outSize_dev);
   }
