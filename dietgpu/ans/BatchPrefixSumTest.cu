@@ -55,8 +55,7 @@ TEST(BatchPrefixSum, OneLevel) {
   auto gen = std::mt19937(10);
   auto nbDist = std::uniform_int_distribution<uint32_t>(1, 20);
 
-  for (auto batchSize :
-       {1, 10, 32, 33, 64, 65, 128, 129, 256, 257, 512, 513, 1024}) {
+  for (auto batchSize : {1, 10, 32, 33, 64, 65, 128, 129, 256, 257, 512}) {
     auto numInBatch = nbDist(gen);
 
     auto data = makeSequence(numInBatch, batchSize, nbDist(gen));
@@ -89,11 +88,11 @@ TEST(BatchPrefixSum, TwoLevel) {
   auto stream = CudaStream::makeNonBlocking();
 
   auto batchSizes = std::vector<int>{
-      1025, 2047, 2048, 4096, 4097, 10000, 100000, 1024 * 1024};
+      513, 1024, 2047, 2048, 4096, 4097, 10000, 100000, 512 * 512};
 
   auto gen = std::mt19937(10);
   auto nbDist = std::uniform_int_distribution<uint32_t>(1, 20);
-  auto bsDist = std::uniform_int_distribution<uint32_t>(1025, 1024 * 1024);
+  auto bsDist = std::uniform_int_distribution<uint32_t>(513, 512 * 512);
 
   for (int i = 0; i < 10; ++i) {
     batchSizes.push_back(bsDist(gen));

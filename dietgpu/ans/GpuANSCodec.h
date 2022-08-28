@@ -15,7 +15,23 @@ namespace dietgpu {
 // Required minimum alignment in bytes of all data to be compressed in the batch
 constexpr int kANSRequiredAlignment = 4;
 
+// Default number of probability quantization bits to use, if an alternative is
+// not specified
+constexpr int kANSDefaultProbBits = 10;
+
 uint32_t getMaxCompressedSize(uint32_t uncompressedBytes);
+
+struct ANSCodecConfig {
+  inline ANSCodecConfig() : probBits(kANSDefaultProbBits) {}
+
+  inline ANSCodecConfig(int pb) : probBits(pb) {}
+
+  // What the ANS probability accuracy is; all symbols have quantized
+  // probabilities of 1/2^probBits.
+  // 9, 10, 11 are only valid values. When in doubt, use 10 (e.g., all symbol
+  // probabilities are one of {1/1024, 2/1024, ..., 1023/1024, 1024/1024})
+  int probBits;
+};
 
 //
 // Encode
@@ -23,8 +39,9 @@ uint32_t getMaxCompressedSize(uint32_t uncompressedBytes);
 
 void ansEncodeBatchStride(
     StackDeviceMemory& res,
-    // Quantized minimum symbol probability (1/2^probBits)
-    int probBits,
+    // Compression configuration
+    const ANSCodecConfig& config,
+
     // Number of separate, independent compression problems
     uint32_t numInBatch,
 
@@ -57,8 +74,9 @@ void ansEncodeBatchStride(
 
 void ansEncodeBatchPointer(
     StackDeviceMemory& res,
-    // Quantized minimum symbol probability (1/2^probBits)
-    int probBits,
+    // Compression configuration
+    const ANSCodecConfig& config,
+
     // Number of separate, independent compression problems
     uint32_t numInBatch,
 
@@ -86,8 +104,10 @@ void ansEncodeBatchPointer(
 
 void ansEncodeBatchSplitSize(
     StackDeviceMemory& res,
-    // Quantized minimum symbol probability (1/2^probBits)
-    int probBits,
+
+    // Compression configuration
+    const ANSCodecConfig& config,
+
     // Number of separate, independent compression problems
     uint32_t numInBatch,
 
@@ -124,8 +144,10 @@ void ansEncodeBatchSplitSize(
 
 void ansDecodeBatchStride(
     StackDeviceMemory& res,
-    // Quantized minimum symbol probability (1/2^probBits)
-    int probBits,
+
+    // Expected compression configuration (we verify this upon decompression)
+    const ANSCodecConfig& config,
+
     // Number of separate, independent decompression problems
     uint32_t numInBatch,
 
@@ -180,8 +202,10 @@ void ansDecodeBatchStride(
 
 void ansDecodeBatchPointer(
     StackDeviceMemory& res,
-    // Expected quantized minimum symbol probability (1/2^probBits)
-    int probBits,
+
+    // Expected compression configuration (we verify this upon decompression)
+    const ANSCodecConfig& config,
+
     // Number of separate, independent decompression problems
     uint32_t numInBatch,
 
@@ -215,8 +239,10 @@ void ansDecodeBatchPointer(
 
 void ansDecodeBatchSplitSize(
     StackDeviceMemory& res,
-    // Expected quantized minimum symbol probability (1/2^probBits)
-    int probBits,
+
+    // Expected compression configuration (we verify this upon decompression)
+    const ANSCodecConfig& config,
+
     // Number of separate, independent compression problems
     uint32_t numInBatch,
 

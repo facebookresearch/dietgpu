@@ -189,7 +189,7 @@ void runBatchStride(
 
   ansEncodeBatchStride(
       res,
-      prec,
+      ANSCodecConfig(prec),
       numInBatch,
       orig_dev.data(),
       inBatchSize,
@@ -215,7 +215,7 @@ void runBatchStride(
   // sure the compressed size is accurate
   ansDecodeBatchStride(
       res,
-      prec,
+      ANSCodecConfig(prec),
       numInBatch,
       enc_dev.data(),
       outBatchStride,

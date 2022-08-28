@@ -52,7 +52,7 @@ class TestFloatCodec(unittest.TestCase):
         dev = torch.device("cuda:0")
         temp_mem = torch.empty([64 * 1024 * 1024], dtype=torch.uint8, device=dev)
 
-        for dt in [torch.bfloat16, torch.float16]:
+        for dt in [torch.bfloat16, torch.float16, torch.float32]:
             for tm in [False, True]:
                 ts = [
                     torch.normal(0, 1.0, [i], dtype=dt, device=dev)
@@ -67,7 +67,7 @@ class TestFloatCodec(unittest.TestCase):
         dev = torch.device("cuda:0")
         temp_mem = torch.empty([64 * 1024 * 1024], dtype=torch.uint8, device=dev)
 
-        for dt in [torch.bfloat16, torch.float16]:
+        for dt in [torch.bfloat16, torch.float16, torch.float32]:
             for tm in [False, True]:
                 ts = [torch.normal(0, 1.0, [123456789], dtype=dt, device=dev)]
                 if tm:
@@ -77,7 +77,7 @@ class TestFloatCodec(unittest.TestCase):
 
     def test_simple(self):
         dev = torch.device("cuda:0")
-        for dt in [torch.bfloat16, torch.float16]:
+        for dt in [torch.bfloat16, torch.float16, torch.float32]:
             ts = [
                 torch.normal(0, 1.0, [i], dtype=dt, device=dev)
                 for i in [10000, 100000, 1000000]
@@ -85,6 +85,7 @@ class TestFloatCodec(unittest.TestCase):
 
             cts = torch.ops.dietgpu.compress_data_simple(True, ts)
             for before, after in zip(ts, cts):
+                # We should actually be compressing data
                 assert (
                     before.numel() * before.element_size()
                     > after.numel() * after.element_size()
@@ -96,20 +97,21 @@ class TestFloatCodec(unittest.TestCase):
 
     def test_empty(self):
         dev = torch.device("cuda:0")
-        ts = [torch.empty([0], dtype=torch.float16, device=dev)]
-        comp_ts = torch.ops.dietgpu.compress_data_simple(True, ts)
+        for dt in [torch.bfloat16, torch.float16, torch.float32]:
+            ts = [torch.empty([0], dtype=dt, device=dev)]
+            comp_ts = torch.ops.dietgpu.compress_data_simple(True, ts)
 
-        # should have a header
-        assert comp_ts[0].numel() > 0
+            # should have a header
+            assert comp_ts[0].numel() > 0
 
-        decomp_ts = torch.ops.dietgpu.decompress_data_simple(True, comp_ts)
-        assert torch.equal(ts[0], decomp_ts[0])
+            decomp_ts = torch.ops.dietgpu.decompress_data_simple(True, comp_ts)
+            assert torch.equal(ts[0], decomp_ts[0])
 
     def test_split_compress(self):
         dev = torch.device("cuda:0")
         temp_mem = torch.empty([64 * 1024 * 1024], dtype=torch.uint8, device=dev)
 
-        for dt in [torch.bfloat16, torch.float16]:
+        for dt in [torch.bfloat16, torch.float16, torch.float32]:
             for align16 in [True, False]:
                 for tries in range(5):
                     batch_size = random.randrange(1, 15)
@@ -144,7 +146,7 @@ class TestFloatCodec(unittest.TestCase):
         dev = torch.device("cuda:0")
         temp_mem = torch.empty([64 * 1024 * 1024], dtype=torch.uint8, device=dev)
 
-        for dt in [torch.bfloat16, torch.float16]:
+        for dt in [torch.bfloat16, torch.float16, torch.float32]:
             for align16 in [True, False]:
                 for tries in range(5):
                     batch_size = random.randrange(1, 15)

@@ -31,32 +31,11 @@ std::vector<uint8_t> generateSymbols(int num, float lambda = 20.0f) {
   return out;
 }
 
-std::vector<uint32_t> histogram(
-    const std::vector<uint8_t>& data,
-    uint8_t* minSymbol = nullptr,
-    uint8_t* maxSymbol = nullptr) {
+std::vector<uint32_t> histogram(const std::vector<uint8_t>& data) {
   auto counts = std::vector<uint32_t>(256);
 
-  int minSym = std::numeric_limits<int>::max();
-  int maxSym = std::numeric_limits<int>::min();
-
   for (auto v : data) {
-    minSym = std::min((int)v, minSym);
-    maxSym = std::max((int)v, maxSym);
     counts[v]++;
-  }
-
-  EXPECT_GE(minSym, 0);
-  EXPECT_LE(minSym, std::numeric_limits<uint8_t>::max());
-  EXPECT_GE(maxSym, 0);
-  EXPECT_LE(maxSym, std::numeric_limits<uint8_t>::max());
-  EXPECT_LE(minSym, maxSym);
-
-  if (minSymbol) {
-    *minSymbol = minSym;
-  }
-  if (maxSymbol) {
-    *maxSymbol = maxSym;
   }
 
   return counts;
@@ -115,38 +94,114 @@ TEST(ANSStatisticsTest, Histogram) {
   }
 }
 
-// TEST(ANSStatisticsTest, Statistics2) {
-//   StandardGpuResources res;
-//   auto stream = res.getDefaultStreamCurrentDevice();
+std::vector<uint4> dataToANSTable(
+    const std::vector<uint8_t>& data,
+    int probBits = 10) {
+  auto res = makeStackMemory();
+  // run on a different stream to test stream assignment
+  auto stream = CudaStream::makeNonBlocking();
 
-//   for (auto size : {40000}) {
-//     int numInBatch = 512;
+  auto data_dev = res.copyAlloc(stream, data);
 
-//     std::vector<uint32_t> histograms;
-//     auto data = std::vector<uint8_t>();
+  // Get histogram
+  auto hist_dev = res.alloc<uint32_t>(stream, kNumSymbols);
+  auto inProvider =
+      BatchProviderStride(data_dev.data(), data.size(), data.size());
 
-//     for (int b = 0; b < numInBatch; ++b) {
-//       auto gen = generateSymbols(size, 20.0 + b * 2);
-//       data.insert(data.end(), gen.begin(), gen.end());
+  ansHistogramBatch(1, inProvider, hist_dev.data(), stream);
 
-//       auto hist = histogram(gen);
-//       histograms.insert(histograms.end(), hist.begin(), hist.end());
-//     }
+  // Get ANS table from histogram (post-normalization)
+  auto table_dev = res.alloc<uint4>(stream, kNumSymbols);
 
-//     auto data_dev = toDeviceNonTemporary(&res, data, stream);
+  ansCalcWeights(
+      1,
+      probBits,
+      BatchProviderStride(hist_dev.data(), data.size(), data.size()),
+      hist_dev.data(),
+      table_dev.data(),
+      stream);
 
-//     auto histogram_dev = DeviceTensor<uint32_t, 1, true>(
-//       &res, makeDevAlloc(AllocType::Other, stream),
-//       {numInBatch * (int) kNumSymbols});
+  return table_dev.copyToHost(stream);
+}
 
-//     ansCalcHistogram(data_dev.data(),
-//                      numInBatch,
-//                      size,
-//                      size,
-//                      histogram_dev.data(),
-//                      stream);
+TEST(ANSStatisticsTest, Normalization_NonZero) {
+  // Ensure that non-zero count symbols get non-zero weight
+  auto data = std::vector<uint8_t>(10000);
 
-//     auto histograms_gpu = histogram_dev.copyToVector(stream);
-//     EXPECT_EQ(histograms, histograms_gpu);
-//   }
-// }
+  for (int i = 0; i < 256; ++i) {
+    data[i] = uint8_t(i);
+  }
+
+  for (int i = 256; i < data.size(); ++i) {
+    data[i] = 1;
+  }
+
+  int probBits = 10;
+  auto table = dataToANSTable(data, probBits);
+
+  for (int i = 0; i < kNumSymbols; ++i) {
+    if (i != 1) {
+      EXPECT_EQ(table[i].x, 1);
+    } else {
+      EXPECT_EQ(table[i].x, (1 << probBits) - 255);
+    }
+  }
+}
+
+TEST(ANSStatisticsTest, Normalization_EqualWeight) {
+  // Ensure that non-zero count symbols get non-zero weight
+  auto data = std::vector<uint8_t>(kNumSymbols * 64);
+
+  for (int i = 0; i < 64; ++i) {
+    for (int j = 0; j < kNumSymbols; ++j) {
+      data[i * kNumSymbols + j] = uint8_t(j);
+    }
+  }
+
+  int probBits = 10;
+  auto table = dataToANSTable(data, probBits);
+
+  for (int i = 0; i < kNumSymbols; ++i) {
+    EXPECT_EQ(table[i].x, (1 << probBits) / kNumSymbols);
+  }
+}
+
+TEST(ANSStatisticsTest, Normalization) {
+  auto data = generateSymbols(12345, 40.0f);
+
+  // Count true distribution
+  auto hist = histogram(data);
+
+  int probBits = 11;
+  auto table = dataToANSTable(data, probBits);
+
+  uint32_t totalSum = 0;
+  uint32_t totalWeight = 1 << probBits;
+
+  for (int i = 0; i < kNumSymbols; ++i) {
+    auto count = hist[i];
+    auto pdf = table[i].x;
+
+    totalSum += pdf;
+
+    if (count == 0) {
+      EXPECT_EQ(pdf, 0) << "failed on " << i;
+    } else if (count > 0) {
+      EXPECT_GT(pdf, 0);
+      // The normalized prob should be within some small factor of the real
+      // count
+      float prob = float(count) / float(data.size());
+      float normalizedProb = float(pdf) / float(totalWeight);
+
+      EXPECT_GE(normalizedProb, prob * 0.5f);
+
+      // Only relevant if the prob is > 1/totalWeight (i.e., we
+      // weren't rounded up to be a non-zero weight)
+      if (prob > 1.0f / float(totalWeight)) {
+        EXPECT_LE(normalizedProb, prob * 2.0f);
+      }
+    }
+  }
+
+  EXPECT_EQ(totalSum, totalWeight);
+}

@@ -212,53 +212,85 @@ __device__ void ansDecodeWarpBlock(
   }
 }
 
+template <typename Writer, int ProbBits, int BlockSize, bool UseVec4>
+struct ANSDecodeWarpFullBlock;
+
+// template <typename Writer, int ProbBits, int BlockSize>
+// struct ANSDecodeWarpFullBlock<Writer, ProbBits, BlockSize, true> {
+//   static __device__ void decode(
+//     int laneId,
+//     ANSStateT state,
+//     uint32_t compressedWords,
+//     const ANSEncodedT* __restrict__ in,
+//     Writer& writer,
+//     const TableT* __restrict__ table) {
+//     // A variable number of compressed elements are read each iteration
+//     using VecT = ANSDecodedTx4;
+
+//     in += compressedWords;
+
+//     // 2: 252.16 us
+//     // 3: 246.62 us
+//     // 4: 254.91 us
+//     constexpr int kCacheLinesAhead = 3;
+
+//     for (int i = (BlockSize / sizeof(VecT)) - kWarpSize + laneId; i >= 0;
+//          i -= kWarpSize) {
+//       VecT symV;
+//       // Assuming no compression, we load 2 * sizeof(ANSEncodedT) *
+//       // kWarpSize = 128 bytes per iteration
+//       asm volatile("prefetch.global.L1 [%0];"
+//                    :
+//                    : "l"(in - (kCacheLinesAhead * 128) /
+//                    sizeof(ANSEncodedT)));
+
+//       //    writer.preload(i + laneId);
+//       writer.preload(i);
+
+// #pragma unroll
+//       for (int j = sizeof(VecT) - 1; j >= 0; --j) {
+//         ANSDecodedT sym;
+//         uint32_t numCompressedRead;
+
+//         decodeOneWarp<ProbBits>(
+//           state, compressedWords, in, table, numCompressedRead, sym);
+
+//         symV.x[j] = sym;
+//         // compressedWords -= numCompressedRead;
+//         in -= numCompressedRead;
+//       }
+
+//       //    writer.writeVec(i + laneId, symV);
+//       writer.writeVec(i, symV);
+//     }
+//   }
+// };
+
+// Non-vectorized full block implementation
 template <typename Writer, int ProbBits, int BlockSize>
-__device__ void ansDecodeWarpFullBlock(
-    int laneId,
-    ANSStateT state,
-    uint32_t compressedWords,
-    const ANSEncodedT* __restrict__ in,
-    Writer& writer,
-    const TableT* __restrict__ table) {
-  // A variable number of compressed elements are read each iteration
-  using VecT = ANSDecodedTx4;
+struct ANSDecodeWarpFullBlock<Writer, ProbBits, BlockSize, false> {
+  static __device__ void decode(
+      int laneId,
+      ANSStateT state,
+      uint32_t compressedWords,
+      const ANSEncodedT* __restrict__ in,
+      Writer& writer,
+      const TableT* __restrict__ table) {
+    in += compressedWords;
 
-  in += compressedWords;
-
-  // 2: 252.16 us
-  // 3: 246.62 us
-  // 4: 254.91 us
-  constexpr int kCacheLinesAhead = 3;
-
-  for (int i = (BlockSize / sizeof(VecT)) - kWarpSize + laneId; i >= 0;
-       i -= kWarpSize) {
-    VecT symV;
-    // Assuming no compression, we load 2 * sizeof(ANSEncodedT) *
-    // kWarpSize = 128 bytes per iteration
-    asm volatile("prefetch.global.L1 [%0];"
-                 :
-                 : "l"(in - (kCacheLinesAhead * 128) / sizeof(ANSEncodedT)));
-
-    //    writer.preload(i + laneId);
-    writer.preload(i);
-
-#pragma unroll
-    for (int j = sizeof(VecT) - 1; j >= 0; --j) {
+    for (int i = BlockSize - kWarpSize + laneId; i >= 0; i -= kWarpSize) {
       ANSDecodedT sym;
       uint32_t numCompressedRead;
 
       decodeOneWarp<ProbBits>(
           state, compressedWords, in, table, numCompressedRead, sym);
 
-      symV.x[j] = sym;
-      // compressedWords -= numCompressedRead;
       in -= numCompressedRead;
-    }
 
-    //    writer.writeVec(i + laneId, symV);
-    writer.writeVec(i, symV);
+      writer.write(i, sym);
+    }
   }
-}
+};
 
 template <
     typename InProvider,
@@ -277,17 +309,14 @@ __global__ __launch_bounds__(128) void ansDecodeKernel(
 
   // Interpret header as uint4
   auto headerIn = (const ANSCoalescedHeader*)inProvider.getBatchStart(batch);
+  headerIn->checkMagic();
 
-  auto data0 = headerIn->data0;
-  auto numBlocks = data0.x & 0xffffffU;
-  auto totalUncompressedWords = data0.y;
+  auto header = *headerIn;
+  auto numBlocks = header.numBlocks();
+  auto totalUncompressedWords = header.totalUncompressedWords();
 
-  uint32_t symbolOffset;
-  uint32_t probBits;
-  uint32_t numSymbols;
-  unpackSymbolInfo(data0.w, symbolOffset, probBits, numSymbols);
   // Is the data what we expect?
-  assert(ProbBits == probBits);
+  assert(ProbBits == header.probBits());
 
   // Do we have enough space for the decompressed data?
   auto uncompressedBytes = totalUncompressedWords * sizeof(ANSDecodedT);
@@ -352,11 +381,12 @@ __global__ __launch_bounds__(128) void ansDecodeKernel(
 
     writer.setBlock(block);
 
+    using Writer = typename OutProvider::Writer;
     if (uncompressedWords == BlockSize) {
-      ansDecodeWarpFullBlock<OutProvider::Writer, ProbBits, BlockSize>(
+      ANSDecodeWarpFullBlock<Writer, ProbBits, BlockSize, false>::decode(
           laneId, state, compressedWords, blockDataIn, writer, lookup);
     } else {
-      ansDecodeWarpBlock<OutProvider::Writer, ProbBits>(
+      ansDecodeWarpBlock<Writer, ProbBits>(
           laneId,
           state,
           uncompressedWords,
@@ -371,28 +401,26 @@ __global__ __launch_bounds__(128) void ansDecodeKernel(
 template <typename BatchProvider, int Threads>
 __global__ void ansDecodeTable(
     BatchProvider inProvider,
-    uint32_t expectedProbBits,
+    uint32_t probBits,
     TableT* __restrict__ table) {
   int batch = blockIdx.x;
   int tid = threadIdx.x;
   int warpId = tid / kWarpSize;
   int laneId = getLaneId();
 
-  table += batch * (1 << expectedProbBits);
+  table += batch * (1 << probBits);
   auto headerIn = (const ANSCoalescedHeader*)inProvider.getBatchStart(batch);
 
+  auto header = *headerIn;
+
   // Is this an expected header?
-  headerIn->checkMagic();
+  header.checkMagic();
 
-  uint32_t symbolOffset;
-  uint32_t probBits;
-  uint32_t numSymbols;
-  unpackSymbolInfo(headerIn->symbolInfo(), symbolOffset, probBits, numSymbols);
-  assert(probBits == expectedProbBits);
+  // Is our probability resolution what we expected?
+  assert(header.probBits() == probBits);
 
-  if (numSymbols == 0) {
-    // compressed empty array
-    assert(headerIn->totalUncompressedWords() == 0);
+  if (header.totalUncompressedWords() == 0) {
+    // nothing to do; compressed empty array
     return;
   }
 
@@ -400,7 +428,7 @@ __global__ void ansDecodeTable(
   auto probs = headerIn->getSymbolProbs();
 
   static_assert(Threads >= kNumSymbols, "");
-  uint32_t pdf = tid < numSymbols ? probs[tid] : 0;
+  uint32_t pdf = tid < kNumSymbols ? probs[tid] : 0;
   uint32_t cdf = 0;
 
   // Get the CDF from the PDF
@@ -418,7 +446,7 @@ __global__ void ansDecodeTable(
   // Broadcast the pdf/cdf values
   __shared__ uint2 smemPdfCdf[kNumSymbols];
 
-  if (tid < numSymbols) {
+  if (tid < kNumSymbols) {
     smemPdfCdf[tid] = uint2{pdf, cdf};
   }
 
@@ -427,16 +455,16 @@ __global__ void ansDecodeTable(
   // Build the table for each pdf/cdf bucket
   constexpr int kWarpsPerBlock = Threads / kWarpSize;
 
-  for (int i = warpId; i < numSymbols; i += kWarpsPerBlock) {
+  for (int i = warpId; i < kNumSymbols; i += kWarpsPerBlock) {
     auto v = smemPdfCdf[i];
 
     auto pdf = v.x;
     auto begin = v.y;
-    auto end = (i + 1) < numSymbols ? (begin + pdf) : totalProb;
+    auto end = begin + pdf;
 
     for (int j = begin + laneId; j < end; j += kWarpSize) {
       table[j] = packDecodeLookup(
-          i + symbolOffset, // symbol
+          i, // symbol
           pdf, // bucket pdf
           j - begin); // within-bucket cdf
     }
@@ -446,20 +474,21 @@ __global__ void ansDecodeTable(
 template <typename InProvider, typename OutProvider>
 void ansDecodeBatch(
     StackDeviceMemory& res,
-    int probBits,
+    const ANSCodecConfig& config,
     uint32_t numInBatch,
     const InProvider& inProvider,
     OutProvider& outProvider,
     uint8_t* outSuccess_dev,
     uint32_t* outSize_dev,
     cudaStream_t stream) {
-  auto table_dev = res.alloc<TableT>(stream, numInBatch * (1 << probBits));
+  auto table_dev =
+      res.alloc<TableT>(stream, numInBatch * (1 << config.probBits));
 
   // Build the rANS decoding table from the compression header
   {
     constexpr int kThreads = 512;
     ansDecodeTable<InProvider, kThreads><<<numInBatch, kThreads, 0, stream>>>(
-        inProvider, probBits, table_dev.data());
+        inProvider, config.probBits, table_dev.data());
   }
 
   // Perform decoding
@@ -502,7 +531,7 @@ void ansDecodeBatch(
         outSize_dev);                                              \
   } while (false)
 
-    switch (probBits) {
+    switch (config.probBits) {
       case 9:
         RUN_DECODE(9);
         break;
@@ -513,7 +542,7 @@ void ansDecodeBatch(
         RUN_DECODE(11);
         break;
       default:
-        CHECK(false) << "unhandled pdf precision " << probBits;
+        CHECK(false) << "unhandled pdf precision " << config.probBits;
     }
 
 #undef RUN_DECODE

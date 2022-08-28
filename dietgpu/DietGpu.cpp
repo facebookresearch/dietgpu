@@ -24,8 +24,12 @@ FloatType getFloatTypeFromDtype(at::ScalarType t) {
       return FloatType::kFloat16;
     case at::ScalarType::BFloat16:
       return FloatType::kBFloat16;
+    case at::ScalarType::Float:
+      return FloatType::kFloat32;
     default:
-      TORCH_CHECK(t == at::ScalarType::Half || t == at::ScalarType::BFloat16);
+      TORCH_CHECK(
+          t == at::ScalarType::Half || t == at::ScalarType::BFloat16 ||
+          t == at::ScalarType::Float);
       return FloatType::kUndefined;
   }
 }
@@ -36,8 +40,12 @@ at::ScalarType getDtypeFromFloatType(FloatType ft) {
       return at::ScalarType::Half;
     case FloatType::kBFloat16:
       return at::ScalarType::BFloat16;
+    case FloatType::kFloat32:
+      return at::ScalarType::Float;
     default:
-      TORCH_CHECK(ft == FloatType::kFloat16 || ft == FloatType::kBFloat16);
+      TORCH_CHECK(
+          ft == FloatType::kFloat16 || ft == FloatType::kBFloat16 ||
+          ft == FloatType::kFloat32);
       return at::ScalarType::Half;
   }
 }
@@ -535,7 +543,8 @@ int64_t decompress_data_res(
     TORCH_CHECK(tIn.dtype() == torch::kByte);
     if (compressAsFloat) {
       TORCH_CHECK(
-          tOut.dtype() == torch::kFloat16 || tOut.dtype() == torch::kBFloat16);
+          tOut.dtype() == torch::kFloat16 || tOut.dtype() == torch::kBFloat16 ||
+          tOut.dtype() == torch::kFloat32);
     }
 
     inPtrs[i] = tIn.data_ptr();
@@ -692,7 +701,8 @@ int64_t decompress_data_split_size(
   TORCH_CHECK(tOut.is_contiguous());
   if (compressAsFloat) {
     TORCH_CHECK(
-        tOut.dtype() == torch::kFloat16 || tOut.dtype() == torch::kBFloat16);
+        tOut.dtype() == torch::kFloat16 || tOut.dtype() == torch::kBFloat16 ||
+        tOut.dtype() == torch::kFloat32);
   }
 
   auto outSize =

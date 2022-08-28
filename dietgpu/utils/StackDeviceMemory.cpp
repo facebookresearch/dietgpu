@@ -10,7 +10,6 @@
 #include <iostream>
 #include <sstream>
 #include "dietgpu/utils/DeviceUtils.h"
-#include "dietgpu/utils/StaticUtils.h"
 
 namespace dietgpu {
 
