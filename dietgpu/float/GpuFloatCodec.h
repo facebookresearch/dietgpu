@@ -15,7 +15,7 @@ namespace dietgpu {
 class StackDeviceMemory;
 
 // The various floating point types we support for compression
-enum FloatType {
+enum FloatType : uint32_t {
   kUndefined = 0,
   kFloat16 = 1,
   kBFloat16 = 2,
@@ -32,18 +32,39 @@ uint32_t getMaxFloatCompressedSize(FloatType floatType, uint32_t size);
 
 struct FloatCodecConfig {
   inline FloatCodecConfig()
-      : floatType(FloatType::kFloat16), is16ByteAligned(false) {}
+      : floatType(FloatType::kFloat16),
+        useChecksum(false),
+        is16ByteAligned(false) {}
 
   inline FloatCodecConfig(
       FloatType ft,
       const ANSCodecConfig& ansConf,
-      bool align)
-      : floatType(ft), ansConfig(ansConf), is16ByteAligned(align) {}
+      bool align,
+      bool checksum = false)
+      : floatType(ft),
+        useChecksum(checksum),
+        ansConfig(ansConf),
+        is16ByteAligned(align) {
+    // ANS-level checksumming is not allowed in float mode, only float level
+    // checksumming
+    assert(!ansConf.useChecksum);
+  }
 
   // What kind of floats are we compressing/decompressing?
   FloatType floatType;
 
+  // If true, we calculate a checksum on the uncompressed float input data to
+  // compression and store it in the archive, and on the decompression side
+  // post-decompression, we calculate a checksum on the decompressed data which
+  // is compared with the original stored in the archive.
+  // This is an optional feature useful if DietGPU data will be stored
+  // persistently on disk.
+  bool useChecksum;
+
   // ANS entropy coder parameters
+  // Checksumming will happen at the float level, not the ANS level, as
+  // decompression from ANS is immediately consumed by the float layer,
+  // so ansConfig.useChecksum being true is an error.
   ANSCodecConfig ansConfig;
 
   // Are all all float input pointers/offsets (compress) or output

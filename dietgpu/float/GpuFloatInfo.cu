@@ -22,13 +22,13 @@ __global__ void floatGetCompressedInfo(
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < numInBatch) {
     auto header = *(GpuFloatHeader*)in[idx];
+    header.checkMagicAndVersion();
 
     uint32_t size = 0;
     uint32_t type = FloatType::kUndefined;
 
-    assert(header.magic == kGpuFloatHeaderMagic);
     size = header.size;
-    type = header.floatType;
+    type = header.getFloatType();
 
     if (outSizes) {
       outSizes[idx] = size;

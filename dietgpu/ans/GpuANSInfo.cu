@@ -19,8 +19,8 @@ ansGetCompressedInfo(const void** in, uint32_t numInBatch, uint32_t* outSizes) {
   if (idx < numInBatch) {
     auto header = *(ANSCoalescedHeader*)in[idx];
 
-    header.checkMagic();
-    outSizes[idx] = header.totalUncompressedWords();
+    header.checkMagicAndVersion();
+    outSizes[idx] = header.getTotalUncompressedWords();
   }
 }
 

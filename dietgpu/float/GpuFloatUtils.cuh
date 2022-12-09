@@ -16,14 +16,59 @@
 
 namespace dietgpu {
 
-constexpr uint32_t kGpuFloatHeaderMagic = 0x1234f00d;
+// magic number to verify archive integrity
+constexpr uint32_t kFloatMagic = 0xf00f;
+
+// current DietGPU version number
+constexpr uint32_t kFloatVersion = 0x0001;
 
 // Header on our compressed floating point data
 struct __align__(16) GpuFloatHeader {
-  uint32_t magic;
+  __host__ __device__ void setMagicAndVersion() {
+    magicAndVersion = (kFloatMagic << 16) | kFloatVersion;
+  }
+
+  __host__ __device__ void checkMagicAndVersion() const {
+    assert((magicAndVersion >> 16) == kFloatMagic);
+    assert((magicAndVersion & 0xffffU) == kFloatVersion);
+  }
+
+  __host__ __device__ FloatType getFloatType() const {
+    return FloatType(options & 0xf);
+  }
+
+  __host__ __device__ void setFloatType(FloatType ft) {
+    assert(ft <= 0xf);
+    options = (options & 0xfffffff0U) | ft;
+  }
+
+  __host__ __device__ bool getUseChecksum() const {
+    return options & 0x10;
+  }
+
+  __host__ __device__ void setUseChecksum(bool uc) {
+    options = (options & 0xffffffef) | (uint32_t(uc) << 4);
+  }
+
+  __host__ __device__ uint32_t getChecksum() const {
+    return checksum;
+  }
+
+  __host__ __device__ void setChecksum(uint32_t c) {
+    checksum = c;
+  }
+
+  // (16: magic)(16: version)
+  uint32_t magicAndVersion;
+
+  // Number of floating point words of the given float type in the archive
   uint32_t size;
-  uint32_t floatType;
-  uint32_t unused;
+
+  // (27: unused)(1: use checksum)(4: float type)
+  uint32_t options;
+
+  // Optional checksum computed on the input data
+  uint32_t checksum;
 };
 
 static_assert(sizeof(GpuFloatHeader) == 16, "");

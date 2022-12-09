@@ -22,15 +22,25 @@ constexpr int kANSDefaultProbBits = 10;
 uint32_t getMaxCompressedSize(uint32_t uncompressedBytes);
 
 struct ANSCodecConfig {
-  inline ANSCodecConfig() : probBits(kANSDefaultProbBits) {}
+  inline ANSCodecConfig() :
+      probBits(kANSDefaultProbBits), useChecksum(false) {}
 
-  inline ANSCodecConfig(int pb) : probBits(pb) {}
+  explicit inline ANSCodecConfig(int pb, bool checksum = false) :
+      probBits(pb), useChecksum(checksum) {}
 
   // What the ANS probability accuracy is; all symbols have quantized
   // probabilities of 1/2^probBits.
   // 9, 10, 11 are only valid values. When in doubt, use 10 (e.g., all symbol
   // probabilities are one of {1/1024, 2/1024, ..., 1023/1024, 1024/1024})
   int probBits;
+
+  // If true, we calculate a checksum on the uncompressed input data to
+  // compression and store it in the archive, and on the decompression side
+  // post-decompression, we calculate a checksum on the decompressed data which
+  // is compared with the original stored in the archive.
+  // This is an optional feature useful if DietGPU data will be stored
+  // persistently on disk.
+  bool useChecksum;
 };
 
 //

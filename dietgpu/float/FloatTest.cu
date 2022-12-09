@@ -162,7 +162,8 @@ void runBatchPointerTest(
 
   auto outBatchSize_dev = res.alloc<uint32_t>(stream, numInBatch);
 
-  auto compConfig = FloatCompressConfig(FT, probBits, false);
+  auto compConfig =
+    FloatCompressConfig(FT, ANSCodecConfig(probBits), false, true);
 
   floatCompress(
       res,
@@ -189,7 +190,8 @@ void runBatchPointerTest(
   auto outSuccess_dev = res.alloc<uint8_t>(stream, numInBatch);
   auto outSize_dev = res.alloc<uint32_t>(stream, numInBatch);
 
-  auto decompConfig = FloatDecompressConfig(FT, probBits, false);
+  auto decompConfig =
+    FloatDecompressConfig(FT, ANSCodecConfig(probBits), false, true);
 
   floatDecompress(
       res,

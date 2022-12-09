@@ -8,6 +8,7 @@
 #include "dietgpu/ans/BatchProvider.cuh"
 #include "dietgpu/ans/GpuANSCodec.h"
 #include "dietgpu/ans/GpuANSUtils.cuh"
+#include "dietgpu/ans/GpuChecksum.cuh"
 #include "dietgpu/utils/DeviceDefs.cuh"
 #include "dietgpu/utils/DeviceUtils.h"
 #include "dietgpu/utils/PtxUtils.cuh"
@@ -309,14 +310,14 @@ __global__ __launch_bounds__(128) void ansDecodeKernel(
 
   // Interpret header as uint4
   auto headerIn = (const ANSCoalescedHeader*)inProvider.getBatchStart(batch);
-  headerIn->checkMagic();
+  headerIn->checkMagicAndVersion();
 
   auto header = *headerIn;
-  auto numBlocks = header.numBlocks();
-  auto totalUncompressedWords = header.totalUncompressedWords();
+  auto numBlocks = header.getNumBlocks();
+  auto totalUncompressedWords = header.getTotalUncompressedWords();
 
   // Is the data what we expect?
-  assert(ProbBits == header.probBits());
+  assert(ProbBits == header.getProbBits());
 
   // Do we have enough space for the decompressed data?
   auto uncompressedBytes = totalUncompressedWords * sizeof(ANSDecodedT);
@@ -414,12 +415,12 @@ __global__ void ansDecodeTable(
   auto header = *headerIn;
 
   // Is this an expected header?
-  header.checkMagic();
+  header.checkMagicAndVersion();
 
   // Is our probability resolution what we expected?
-  assert(header.probBits() == probBits);
+  assert(header.getProbBits() == probBits);
 
-  if (header.totalUncompressedWords() == 0) {
+  if (header.getTotalUncompressedWords() == 0) {
     // nothing to do; compressed empty array
     return;
   }
@@ -469,6 +470,38 @@ __global__ void ansDecodeTable(
           j - begin); // within-bucket cdf
     }
   }
+}
+
+template <typename BatchProvider>
+__global__ void ansValidateChecksumKernel(BatchProvider inProvider,
+                                          uint32_t* checksum) {
+  int batch = blockIdx.x;
+
+  auto header = (const ANSCoalescedHeader*)inProvider.getBatchStart(batch);
+  header->checkMagicAndVersion();
+
+  // If we're attempting to validate against the checksum, then the checksum
+  // option must have been enabled in compression
+  assert(header->getUseChecksum());
+
+  uint32_t decompressedChecksum = checksum[batch];
+  uint32_t compressedChecksum = header->getChecksum();
+
+  assert(compressedChecksum == decompressedChecksum);
+}
+
+template <typename InProvider>
+void ansValidateChecksum(
+  uint32_t numInBatch,
+  const InProvider& inProvider,
+  uint32_t* checksum_dev,
+  cudaStream_t stream) {
+
+  ansValidateChecksumKernel<<<numInBatch, 1, 0, stream>>>(
+    inProvider,
+    checksum_dev);
+
+  CUDA_TEST_ERROR();
 }
 
 template <typename InProvider, typename OutProvider>
@@ -546,6 +579,17 @@ void ansDecodeBatch(
     }
 
 #undef RUN_DECODE
+  }
+
+  // Perform optional checksum, if desired
+  if (config.useChecksum) {
+    auto checksum_dev = res.alloc<uint32_t>(stream, numInBatch);
+
+    // Checksum the output data
+    checksumBatch(numInBatch, outProvider, checksum_dev.data(), stream);
+
+    // Compare against previously seen checksums (in inProvider)
+    ansValidateChecksum(numInBatch, inProvider, checksum_dev.data(), stream);
   }
 
   CUDA_TEST_ERROR();

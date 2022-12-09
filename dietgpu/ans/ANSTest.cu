@@ -118,7 +118,7 @@ void runBatchPointer(
 
   ansEncodeBatchPointer(
       res,
-      prec,
+      ANSCodecConfig(prec, true),
       numInBatch,
       inPtrs.data(),
       batchSizes.data(),
@@ -144,11 +144,10 @@ void runBatchPointer(
 
   auto outSuccess_dev = res.alloc<uint8_t>(stream, numInBatch);
   auto outSize_dev = res.alloc<uint32_t>(stream, numInBatch);
-  ;
 
   ansDecodeBatchPointer(
       res,
-      prec,
+      ANSCodecConfig(prec, true),
       numInBatch,
       (const void**)encPtrs.data(),
       decPtrs.data(),
@@ -189,7 +188,7 @@ void runBatchStride(
 
   ansEncodeBatchStride(
       res,
-      ANSCodecConfig(prec),
+      ANSCodecConfig(prec, true),
       numInBatch,
       orig_dev.data(),
       inBatchSize,
@@ -215,7 +214,7 @@ void runBatchStride(
   // sure the compressed size is accurate
   ansDecodeBatchStride(
       res,
-      ANSCodecConfig(prec),
+      ANSCodecConfig(prec, true),
       numInBatch,
       enc_dev.data(),
       outBatchStride,
