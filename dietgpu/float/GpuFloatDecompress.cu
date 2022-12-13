@@ -19,7 +19,7 @@
 
 namespace dietgpu {
 
-void floatDecompress(
+FloatDecompressStatus floatDecompress(
     StackDeviceMemory& res,
     const FloatDecompressConfig& config,
     uint32_t numInBatch,
@@ -60,7 +60,7 @@ void floatDecompress(
     auto outProvider = BatchProviderInlinePointerCapacity<kLimit>(
         numInBatch, out, outCapacity);
 
-    floatDecompressDevice(
+    return floatDecompressDevice(
         res,
         updatedConfig,
         numInBatch,
@@ -70,8 +70,6 @@ void floatDecompress(
         outSuccess_dev,
         outSize_dev,
         stream);
-
-    return;
   }
 
   // Copy data to device
@@ -104,7 +102,7 @@ void floatDecompress(
   auto inProvider = BatchProviderPointer((void**)in_dev);
   auto outProvider = BatchProviderPointer((void**)out_dev, outCapacity_dev);
 
-  floatDecompressDevice(
+  return floatDecompressDevice(
       res,
       updatedConfig,
       numInBatch,
@@ -116,7 +114,7 @@ void floatDecompress(
       stream);
 }
 
-void floatDecompressSplitSize(
+FloatDecompressStatus floatDecompressSplitSize(
     StackDeviceMemory& res,
     const FloatDecompressConfig& config,
     uint32_t numInBatch,
@@ -168,7 +166,7 @@ void floatDecompressSplitSize(
   auto outProvider = BatchProviderSplitSize(
       out, sizes_dev.data(), sizes_dev.data() + numInBatch, floatWordSize);
 
-  floatDecompressDevice(
+  return floatDecompressDevice(
       res,
       updatedConfig,
       numInBatch,

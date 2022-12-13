@@ -48,7 +48,11 @@ constexpr ANSStateT kANSStartState = ANSStateT(1)
 constexpr ANSStateT kANSMinState = ANSStateT(1)
     << (kANSStateBits - kANSEncodedBits);
 
-constexpr uint32_t kCoalescedHeaderMagic = 0xa5;
+// magic number to verify archive integrity
+constexpr uint32_t kANSMagic = 0xd00d;
+
+// current DietGPU version number
+constexpr uint32_t kANSVersion = 0x0001;
 
 // Each block of compressed data (either coalesced or uncoalesced) is aligned to
 // this number of bytes and has a valid (if not all used) segment with this
@@ -60,7 +64,7 @@ struct ANSWarpState {
   ANSStateT warpState[kWarpSize];
 };
 
-struct __align__(16) ANSCoalescedHeader {
+struct __align__(32) ANSCoalescedHeader {
   static __host__ __device__ uint32_t getCompressedOverhead(
       uint32_t numBlocks) {
     constexpr int kAlignment = kBlockAlignment / sizeof(uint2) == 0
@@ -78,53 +82,74 @@ struct __align__(16) ANSCoalescedHeader {
 
   __host__ __device__ uint32_t getTotalCompressedSize() const {
     return getCompressedOverhead() +
-        totalCompressedWords() * sizeof(ANSEncodedT);
+        getTotalCompressedWords() * sizeof(ANSEncodedT);
   }
 
   __host__ __device__ uint32_t getCompressedOverhead() const {
-    return getCompressedOverhead(numBlocks());
+    return getCompressedOverhead(getNumBlocks());
   }
 
   __host__ __device__ float getCompressionRatio() const {
-    return (float)getTotalCompressedSize() / (float)totalUncompressedWords() *
-        sizeof(ANSDecodedT);
+    return (float)getTotalCompressedSize() /
+        (float)getTotalUncompressedWords() * sizeof(ANSDecodedT);
   }
 
-  __host__ __device__ uint32_t numBlocks() const {
-    return (data0.x & 0xffffffU);
+  __host__ __device__ uint32_t getNumBlocks() const {
+    return numBlocks;
   }
 
-  __host__ __device__ void setNumBlocks(uint32_t numBlocks) {
-    assert(numBlocks <= 0xffffffU);
-    data0.x = (kCoalescedHeaderMagic << 24) | numBlocks;
+  __host__ __device__ void setNumBlocks(uint32_t nb) {
+    numBlocks = nb;
   }
 
-  __host__ __device__ void checkMagic() const {
-    assert((data0.x >> 24) == kCoalescedHeaderMagic);
+  __host__ __device__ void setMagicAndVersion() {
+    magicAndVersion = (kANSMagic << 16) | kANSVersion;
   }
 
-  __host__ __device__ uint32_t totalUncompressedWords() const {
-    return data0.y;
+  __host__ __device__ void checkMagicAndVersion() const {
+    assert((magicAndVersion >> 16) == kANSMagic);
+    assert((magicAndVersion & 0xffffU) == kANSVersion);
   }
 
-  __host__ __device__ void setUncompressedWords(uint32_t words) {
-    data0.y = words;
+  __host__ __device__ uint32_t getTotalUncompressedWords() const {
+    return totalUncompressedWords;
   }
 
-  __host__ __device__ uint32_t totalCompressedWords() const {
-    return data0.z;
+  __host__ __device__ void setTotalUncompressedWords(uint32_t words) {
+    totalUncompressedWords = words;
   }
 
-  __host__ __device__ void setCompressedWords(uint32_t words) {
-    data0.z = words;
+  __host__ __device__ uint32_t getTotalCompressedWords() const {
+    return totalCompressedWords;
   }
 
-  __host__ __device__ uint32_t probBits() const {
-    return data0.w;
+  __host__ __device__ void setTotalCompressedWords(uint32_t words) {
+    totalCompressedWords = words;
+  }
+
+  __host__ __device__ uint32_t getProbBits() const {
+    return options & 0xf;
   }
 
   __host__ __device__ void setProbBits(uint32_t bits) {
-    data0.w = bits;
+    assert(bits <= 0xf);
+    options = (options & 0xfffffff0U) | bits;
+  }
+
+  __host__ __device__ bool getUseChecksum() const {
+    return options & 0x10;
+  }
+
+  __host__ __device__ void setUseChecksum(bool uc) {
+    options = (options & 0xffffffef) | (uint32_t(uc) << 4);
+  }
+
+  __host__ __device__ uint32_t getChecksum() const {
+    return checksum;
+  }
+
+  __host__ __device__ void setChecksum(uint32_t c) {
+    checksum = c;
   }
 
   __device__ uint16_t* getSymbolProbs() {
@@ -171,11 +196,19 @@ struct __align__(16) ANSCoalescedHeader {
         const ANSEncodedT*)(getBlockWords(numBlocks) + roundUp(numBlocks, kAlignment));
   }
 
-  // x: (8: magic)(24: numBlocks)
-  // y: totalUncompressedWords
-  // z: totalCompressedWords
-  // w: probBits
-  uint4 data0;
+  // (16: magic)(16: version)
+  uint32_t magicAndVersion;
+  uint32_t numBlocks;
+  uint32_t totalUncompressedWords;
+  uint32_t totalCompressedWords;
+
+  // (27: unused)(1: use checksum)(4: probBits)
+  uint32_t options;
+  uint32_t checksum;
+  uint32_t unused0;
+  uint32_t unused1;
+
+  // Data that follows after the header (some of which is variable length):
 
   // Fixed length array
   // uint16_t probs[kNumSymbols];
@@ -189,7 +222,11 @@ struct __align__(16) ANSCoalescedHeader {
   //
   // Variable length array:
   // uint2 blockWords[roundUp(numBlocks, kBlockAlignment / sizeof(uint2))];
+
+  // Then follows the compressed per-warp/block data for each segment
 };
+
+static_assert(sizeof(ANSCoalescedHeader) == 32, "");
 
 static_assert(isEvenDivisor(sizeof(ANSCoalescedHeader), sizeof(uint4)), "");
 

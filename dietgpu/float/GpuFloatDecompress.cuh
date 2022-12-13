@@ -9,6 +9,7 @@
 #include "dietgpu/ans/GpuANSDecode.cuh"
 #include "dietgpu/ans/GpuANSUtils.cuh"
 #include "dietgpu/float/GpuFloatCodec.h"
+#include "dietgpu/float/GpuFloatInfo.cuh"
 #include "dietgpu/float/GpuFloatUtils.cuh"
 #include "dietgpu/utils/DeviceUtils.h"
 #include "dietgpu/utils/StackDeviceMemory.h"
@@ -16,7 +17,7 @@
 
 #include <glog/logging.h>
 #include <cmath>
-#include <iostream>
+#include <sstream>
 #include <vector>
 
 namespace dietgpu {
@@ -301,7 +302,7 @@ __global__ void joinFloat(
 
   // Get size as a header
   GpuFloatHeader h = *curHeaderIn;
-  assert(h.magic == kGpuFloatHeaderMagic);
+  h.checkMagicAndVersion();
 
   auto curSize = h.size;
 
@@ -325,8 +326,10 @@ struct FloatANSProvider {
   __device__ void* getBatchStart(uint32_t batch) {
     uint8_t* p = (uint8_t*)inProvider_.getBatchStart(batch);
 
+    // This is the first place that touches the header
     GpuFloatHeader h = *((GpuFloatHeader*)p);
-    assert(h.magic == kGpuFloatHeaderMagic);
+    h.checkMagicAndVersion();
+    assert(FT == h.getFloatType());
 
     // Increment the pointer to past the floating point data
     return p + sizeof(GpuFloatHeader) + FTI::getUncompDataSize(h.size);
@@ -335,8 +338,10 @@ struct FloatANSProvider {
   __device__ const void* getBatchStart(uint32_t batch) const {
     const uint8_t* p = (const uint8_t*)inProvider_.getBatchStart(batch);
 
+    // This is the first place that touches the header
     GpuFloatHeader h = *((const GpuFloatHeader*)p);
-    assert(h.magic == kGpuFloatHeaderMagic);
+    h.checkMagicAndVersion();
+    assert(FT == h.getFloatType());
 
     // Increment the pointer to past the floating point data
     return p + sizeof(GpuFloatHeader) + FTI::getUncompDataSize(h.size);
@@ -359,8 +364,10 @@ struct FloatANSProviderInline {
   __device__ void* getBatchStart(uint32_t batch) {
     uint8_t* p = (uint8_t*)in_[batch];
 
+    // This is the first place that touches the header
     GpuFloatHeader h = *((GpuFloatHeader*)p);
-    assert(h.magic == kGpuFloatHeaderMagic);
+    h.checkMagicAndVersion();
+    assert(FT == h.getFloatType());
 
     // Increment the pointer to past the floating point data
     return p + sizeof(GpuFloatHeader) + FTI::getUncompDataSize(h.size);
@@ -369,8 +376,10 @@ struct FloatANSProviderInline {
   __device__ const void* getBatchStart(uint32_t batch) const {
     const uint8_t* p = (const uint8_t*)in_[batch];
 
+    // This is the first place that touches the header
     GpuFloatHeader h = *((const GpuFloatHeader*)p);
-    assert(h.magic == kGpuFloatHeaderMagic);
+    h.checkMagicAndVersion();
+    assert(FT == h.getFloatType());
 
     // Increment the pointer to past the floating point data
     return p + sizeof(GpuFloatHeader) + FTI::getUncompDataSize(h.size);
@@ -488,19 +497,23 @@ struct FloatOutProvider {
   __host__ FloatOutProvider(InProvider& inProvider, OutProvider& outProvider)
       : inProvider_(inProvider), outProvider_(outProvider) {}
 
+  __device__ void* getBatchStart(uint32_t batch) {
+    return inProvider_.getBatchStart(batch);
+  }
+
+  __device__ uint32_t getBatchSize(uint32_t batch) {
+    return outProvider_.getBatchSize(batch);
+  }
+
   __device__ Writer getWriter(uint32_t batch) {
     // Get float header
-    auto h = (const GpuFloatHeader*)inProvider_.getBatchStart(batch);
+    auto h = (const GpuFloatHeader*)getBatchStart(batch);
 
     return Writer(
         h->size,
         (typename FTI::WordT*)outProvider_.getBatchStart(batch),
         // advance past the header
         (const typename FTI::NonCompT*)(h + 1));
-  }
-
-  __device__ uint32_t getBatchSize(uint32_t batch) {
-    return outProvider_.getBatchSize(batch);
   }
 
   InProvider inProvider_;
@@ -525,9 +538,17 @@ struct FloatOutProviderInline {
     }
   }
 
+  __device__ void* getBatchStart(uint32_t batch) {
+    return in_[batch];
+  }
+
+  __device__ uint32_t getBatchSize(uint32_t batch) {
+    return outCapacity_[batch];
+  }
+
   __device__ Writer getWriter(uint32_t batch) {
     // Get float header
-    auto h = (const GpuFloatHeader*)in_[batch];
+    auto h = (const GpuFloatHeader*)getBatchStart(batch);
 
     return Writer(
         h->size,
@@ -536,17 +557,13 @@ struct FloatOutProviderInline {
         (const typename FTI::NonCompT*)(h + 1));
   }
 
-  __device__ uint32_t getBatchSize(uint32_t batch) {
-    return outCapacity_[batch];
-  }
-
   const void* in_[N];
   void* out_[N];
   uint32_t outCapacity_[N];
 };
 
 template <typename InProvider, typename OutProvider>
-void floatDecompressDevice(
+FloatDecompressStatus floatDecompressDevice(
     StackDeviceMemory& res,
     const FloatDecompressConfig& config,
     uint32_t numInBatch,
@@ -556,6 +573,9 @@ void floatDecompressDevice(
     uint8_t* outSuccess_dev,
     uint32_t* outSize_dev,
     cudaStream_t stream) {
+  // not allowed in float mode
+  assert(!config.ansConfig.useChecksum);
+
   // We can perform decoding in a single pass if all input data is 16 byte
   // aligned
   if (config.is16ByteAligned) {
@@ -582,13 +602,13 @@ void floatDecompressDevice(
   } while (false)
 
     switch (config.floatType) {
-      case kFloat16:
+      case FloatType::kFloat16:
         RUN_FUSED(FloatType::kFloat16);
         break;
-      case kBFloat16:
+      case FloatType::kBFloat16:
         RUN_FUSED(FloatType::kBFloat16);
         break;
-      case kFloat32:
+      case FloatType::kFloat32:
         RUN_FUSED(FloatType::kFloat32);
         break;
       default:
@@ -656,13 +676,13 @@ void floatDecompressDevice(
   } while (false)
 
     switch (config.floatType) {
-      case kFloat16:
+      case FloatType::kFloat16:
         RUN_DECODE(FloatType::kFloat16);
         break;
-      case kBFloat16:
+      case FloatType::kBFloat16:
         RUN_DECODE(FloatType::kBFloat16);
         break;
-      case kFloat32:
+      case FloatType::kFloat32:
         RUN_DECODE(FloatType::kFloat32);
         break;
       default:
@@ -673,7 +693,48 @@ void floatDecompressDevice(
 #undef RUN_DECODE
   }
 
+  FloatDecompressStatus status;
+
+  // Perform optional checksum, if desired
+  if (config.useChecksum) {
+    auto checksum_dev = res.alloc<uint32_t>(stream, numInBatch);
+    auto sizes_dev = res.alloc<uint32_t>(stream, numInBatch);
+    auto archiveChecksum_dev = res.alloc<uint32_t>(stream, numInBatch);
+
+    // Checksum the output data
+    checksumBatch(numInBatch, outProvider, checksum_dev.data(), stream);
+
+    // Get prior checksum from the float headers
+    floatGetCompressedInfo(
+        inProvider,
+        numInBatch,
+        sizes_dev.data(),
+        nullptr,
+        archiveChecksum_dev.data(),
+        stream);
+
+    // Compare against previously seen checksums on the host
+    auto sizes = sizes_dev.copyToHost(stream);
+    auto newChecksums = checksum_dev.copyToHost(stream);
+    auto oldChecksums = archiveChecksum_dev.copyToHost(stream);
+
+    std::stringstream errStr;
+
+    for (int i = 0; i < numInBatch; ++i) {
+      if (oldChecksums[i] != newChecksums[i]) {
+        status.error = FloatDecompressError::ChecksumMismatch;
+
+        errStr << "Checksum mismatch in batch member " << i
+               << ": expected checksum " << std::hex << oldChecksums[i]
+               << " got " << newChecksums[i] << "\n";
+        status.errorInfo.push_back(std::make_pair(i, errStr.str()));
+      }
+    }
+  }
+
   CUDA_TEST_ERROR();
+
+  return status;
 }
 
 } // namespace dietgpu

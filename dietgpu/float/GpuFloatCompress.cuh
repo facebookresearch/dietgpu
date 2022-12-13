@@ -8,6 +8,7 @@
 #include "dietgpu/ans/BatchProvider.cuh"
 #include "dietgpu/ans/GpuANSEncode.cuh"
 #include "dietgpu/ans/GpuANSUtils.cuh"
+#include "dietgpu/ans/GpuChecksum.cuh"
 #include "dietgpu/float/GpuFloatCodec.h"
 #include "dietgpu/float/GpuFloatUtils.cuh"
 #include "dietgpu/utils/DeviceDefs.cuh"
@@ -283,6 +284,8 @@ template <
     int Threads>
 __global__ void splitFloat(
     InProvider inProvider,
+    bool useChecksum,
+    const uint32_t* __restrict__ checksum,
     void* __restrict__ compOut,
     uint32_t compOutStride,
     NonCompProvider nonCompProvider,
@@ -298,6 +301,7 @@ __global__ void splitFloat(
   int warpId = threadIdx.x / kWarpSize;
 
   histogramOut += batch * kNumSymbols;
+  checksum += batch;
 
   // +1 in order to force very common symbols that could overlap into different
   // banks between different warps
@@ -320,9 +324,15 @@ __global__ void splitFloat(
   // Write size as a header
   if (blockIdx.x == 0 && threadIdx.x == 0) {
     GpuFloatHeader h;
-    h.magic = kGpuFloatHeaderMagic;
+    h.setMagicAndVersion();
     h.size = curSize;
-    h.floatType = FT;
+    h.setFloatType(FT);
+    h.setUseChecksum(useChecksum);
+
+    if (useChecksum) {
+      h.setChecksum(*checksum);
+    }
+
     *headerOut = h;
   }
 
@@ -411,7 +421,7 @@ struct FloatANSOutProvider {
     uint8_t* p = (uint8_t*)outProvider_.getBatchStart(batch);
 
     // Increment the pointer to past the floating point data
-    assert(((GpuFloatHeader*)p)->magic == kGpuFloatHeaderMagic);
+    ((GpuFloatHeader*)p)->checkMagicAndVersion();
     return p + sizeof(GpuFloatHeader) +
         FTI::getUncompDataSize(sizeProvider_.getBatchSize(batch));
   }
@@ -420,7 +430,7 @@ struct FloatANSOutProvider {
     const uint8_t* p = (const uint8_t*)outProvider_.getBatchStart(batch);
 
     // Increment the pointer to past the floating point data
-    assert(((GpuFloatHeader*)p)->magic == kGpuFloatHeaderMagic);
+    ((GpuFloatHeader*)p)->checkMagicAndVersion();
     return p + sizeof(GpuFloatHeader) +
         FTI::getUncompDataSize(sizeProvider_.getBatchSize(batch));
   }
@@ -446,6 +456,16 @@ void floatCompressDevice(
   auto maxUncompressedWords = maxSize / sizeof(ANSDecodedT);
   uint32_t maxNumCompressedBlocks =
       divUp(maxUncompressedWords, kDefaultBlockSize);
+
+  // Compute checksum on input data (optional)
+  auto checksum_dev = res.alloc<uint32_t>(stream, numInBatch);
+
+  // not allowed in float mode
+  assert(!config.ansConfig.useChecksum);
+
+  if (config.useChecksum) {
+    checksumBatch(numInBatch, inProvider, checksum_dev.data(), stream);
+  }
 
   // Temporary space for the extracted exponents; all rows must be 16 byte
   // aligned
@@ -480,6 +500,8 @@ void floatCompressDevice(
     splitFloat<InProvider, OutProvider, FLOAT_TYPE, kBlock>        \
         <<<grid, kBlock, 0, stream>>>(                             \
             inProvider,                                            \
+            config.useChecksum,                                    \
+            checksum_dev.data(),                                   \
             toComp_dev.data(),                                     \
             compRowStride,                                         \
             outProvider,                                           \
@@ -487,13 +509,13 @@ void floatCompressDevice(
   } while (false)
 
   switch (config.floatType) {
-    case kFloat16:
+    case FloatType::kFloat16:
       RUN_SPLIT(FloatType::kFloat16);
       break;
-    case kBFloat16:
+    case FloatType::kBFloat16:
       RUN_SPLIT(FloatType::kBFloat16);
       break;
-    case kFloat32:
+    case FloatType::kFloat32:
       RUN_SPLIT(FloatType::kFloat32);
       break;
     default:
@@ -537,13 +559,13 @@ void floatCompressDevice(
   // outputs are written.
 
   switch (config.floatType) {
-    case kFloat16:
+    case FloatType::kFloat16:
       RUN_ANS(FloatType::kFloat16);
       break;
-    case kBFloat16:
+    case FloatType::kBFloat16:
       RUN_ANS(FloatType::kBFloat16);
       break;
-    case kFloat32:
+    case FloatType::kFloat32:
       RUN_ANS(FloatType::kFloat32);
       break;
     default:

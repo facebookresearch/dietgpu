@@ -4,10 +4,13 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
+#pragma once
 
 #include "dietgpu/ans/BatchProvider.cuh"
 #include "dietgpu/ans/GpuANSCodec.h"
+#include "dietgpu/ans/GpuANSInfo.cuh"
 #include "dietgpu/ans/GpuANSUtils.cuh"
+#include "dietgpu/ans/GpuChecksum.cuh"
 #include "dietgpu/utils/DeviceDefs.cuh"
 #include "dietgpu/utils/DeviceUtils.h"
 #include "dietgpu/utils/PtxUtils.cuh"
@@ -18,6 +21,7 @@
 #include <cmath>
 #include <cub/block/block_scan.cuh>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 namespace dietgpu {
@@ -309,14 +313,14 @@ __global__ __launch_bounds__(128) void ansDecodeKernel(
 
   // Interpret header as uint4
   auto headerIn = (const ANSCoalescedHeader*)inProvider.getBatchStart(batch);
-  headerIn->checkMagic();
+  headerIn->checkMagicAndVersion();
 
   auto header = *headerIn;
-  auto numBlocks = header.numBlocks();
-  auto totalUncompressedWords = header.totalUncompressedWords();
+  auto numBlocks = header.getNumBlocks();
+  auto totalUncompressedWords = header.getTotalUncompressedWords();
 
   // Is the data what we expect?
-  assert(ProbBits == header.probBits());
+  assert(ProbBits == header.getProbBits());
 
   // Do we have enough space for the decompressed data?
   auto uncompressedBytes = totalUncompressedWords * sizeof(ANSDecodedT);
@@ -414,12 +418,12 @@ __global__ void ansDecodeTable(
   auto header = *headerIn;
 
   // Is this an expected header?
-  header.checkMagic();
+  header.checkMagicAndVersion();
 
   // Is our probability resolution what we expected?
-  assert(header.probBits() == probBits);
+  assert(header.getProbBits() == probBits);
 
-  if (header.totalUncompressedWords() == 0) {
+  if (header.getTotalUncompressedWords() == 0) {
     // nothing to do; compressed empty array
     return;
   }
@@ -472,7 +476,7 @@ __global__ void ansDecodeTable(
 }
 
 template <typename InProvider, typename OutProvider>
-void ansDecodeBatch(
+ANSDecodeStatus ansDecodeBatch(
     StackDeviceMemory& res,
     const ANSCodecConfig& config,
     uint32_t numInBatch,
@@ -548,7 +552,47 @@ void ansDecodeBatch(
 #undef RUN_DECODE
   }
 
+  ANSDecodeStatus status;
+
+  // Perform optional checksum, if desired
+  if (config.useChecksum) {
+    auto checksum_dev = res.alloc<uint32_t>(stream, numInBatch);
+    auto sizes_dev = res.alloc<uint32_t>(stream, numInBatch);
+    auto archiveChecksum_dev = res.alloc<uint32_t>(stream, numInBatch);
+
+    // Checksum the output data
+    checksumBatch(numInBatch, outProvider, checksum_dev.data(), stream);
+
+    // Get prior checksum from the ANS headers
+    ansGetCompressedInfo(
+        inProvider,
+        numInBatch,
+        sizes_dev.data(),
+        archiveChecksum_dev.data(),
+        stream);
+
+    // Compare against previously seen checksums on the host
+    auto sizes = sizes_dev.copyToHost(stream);
+    auto newChecksums = checksum_dev.copyToHost(stream);
+    auto oldChecksums = archiveChecksum_dev.copyToHost(stream);
+
+    std::stringstream errStr;
+
+    for (int i = 0; i < numInBatch; ++i) {
+      if (oldChecksums[i] != newChecksums[i]) {
+        status.error = ANSDecodeError::ChecksumMismatch;
+
+        errStr << "Checksum mismatch in batch member " << i
+               << ": expected checksum " << std::hex << oldChecksums[i]
+               << " got " << newChecksums[i] << "\n";
+        status.errorInfo.push_back(std::make_pair(i, errStr.str()));
+      }
+    }
+  }
+
   CUDA_TEST_ERROR();
+
+  return status;
 }
 
 } // namespace dietgpu
