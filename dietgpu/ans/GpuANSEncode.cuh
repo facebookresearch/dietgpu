@@ -4,11 +4,13 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
+#pragma once
 
 #include "dietgpu/ans/BatchPrefixSum.cuh"
 #include "dietgpu/ans/GpuANSCodec.h"
 #include "dietgpu/ans/GpuANSStatistics.cuh"
 #include "dietgpu/ans/GpuANSUtils.cuh"
+#include "dietgpu/ans/GpuChecksum.cuh"
 #include "dietgpu/utils/DeviceDefs.cuh"
 #include "dietgpu/utils/DeviceUtils.h"
 #include "dietgpu/utils/PtxUtils.cuh"
@@ -512,8 +514,10 @@ __device__ void ansEncodeCoalesce(
     uint32_t uncoalescedBlockStride,
     const uint32_t* __restrict__ compressedWords,
     const uint32_t* __restrict__ compressedWordsPrefix,
+    const uint32_t* __restrict__ checksum,
     const uint4* __restrict__ table,
     uint32_t probBits,
+    bool useChecksum,
     uint32_t numBlocks,
     uint32_t uncompressedWords,
     uint8_t* __restrict__ out,
@@ -543,10 +547,16 @@ __device__ void ansEncodeCoalesce(
       }
 
       ANSCoalescedHeader header;
+      header.setMagicAndVersion();
       header.setNumBlocks(numBlocks);
-      header.setUncompressedWords(uncompressedWords);
-      header.setCompressedWords(totalCompressedWords);
+      header.setTotalUncompressedWords(uncompressedWords);
+      header.setTotalCompressedWords(totalCompressedWords);
       header.setProbBits(probBits);
+      header.setUseChecksum(useChecksum);
+
+      if (useChecksum) {
+        header.setChecksum(*checksum);
+      }
 
       if (compressedBytes) {
         *compressedBytes = header.getTotalCompressedSize();
@@ -621,8 +631,10 @@ __global__ void ansEncodeCoalesceBatch(
     uint32_t uncoalescedBlockStride,
     const uint32_t* __restrict__ compressedWords,
     const uint32_t* __restrict__ compressedWordsPrefix,
+    const uint32_t* __restrict__ checksum,
     const uint4* __restrict__ table,
     uint32_t probBits,
+    bool useChecksum,
     OutProvider outProvider,
     uint32_t* __restrict__ compressedBytes) {
   int batch = blockIdx.y;
@@ -637,6 +649,7 @@ __global__ void ansEncodeCoalesceBatch(
   compressedWords += batch * maxNumCompressedBlocks;
   compressedWordsPrefix += batch * maxNumCompressedBlocks;
   compressedBytes += batch;
+  checksum += batch;
   table += batch * kNumSymbols;
 
   ansEncodeCoalesce<Threads>(
@@ -644,8 +657,10 @@ __global__ void ansEncodeCoalesceBatch(
       uncoalescedBlockStride,
       compressedWords,
       compressedWordsPrefix,
+      checksum,
       table,
       probBits,
+      useChecksum,
       numBlocks,
       uncompressedWords,
       (uint8_t*)outProvider.getBatchStart(batch),
@@ -695,7 +710,13 @@ void ansEncodeBatchDevice(
         stream);
   }
 
-  // 2. Allocate memory for the per-warp results
+  // 2. Compute checksum on input data (optional)
+  auto checksum_dev = res.alloc<uint32_t>(stream, numInBatch);
+  if (config.useChecksum) {
+    checksumBatch(numInBatch, inProvider, checksum_dev.data(), stream);
+  }
+
+  // 3. Allocate memory for the per-warp results
   // How much space in bytes we need to reserve for each warp's output
   uint32_t uncoalescedBlockStride =
       getMaxBlockSizeUnCoalesced(kDefaultBlockSize);
@@ -812,8 +833,10 @@ void ansEncodeBatchDevice(
             uncoalescedBlockStride,
             compressedWords_dev.data(),
             compressedWordsPrefix_dev.data(),
+            checksum_dev.data(),
             table_dev.data(),
             config.probBits,
+            config.useChecksum,
             outProvider,
             outSize_dev);
   }

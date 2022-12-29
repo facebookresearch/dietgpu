@@ -5,41 +5,31 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include "dietgpu/ans/BatchProvider.cuh"
 #include "dietgpu/ans/GpuANSCodec.h"
-#include "dietgpu/ans/GpuANSUtils.cuh"
-#include "dietgpu/utils/DeviceUtils.h"
-#include "dietgpu/utils/StackDeviceMemory.h"
-#include "dietgpu/utils/StaticUtils.h"
+#include "dietgpu/ans/GpuANSInfo.cuh"
 
 namespace dietgpu {
-
-__global__ void
-ansGetCompressedInfo(const void** in, uint32_t numInBatch, uint32_t* outSizes) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx < numInBatch) {
-    auto header = *(ANSCoalescedHeader*)in[idx];
-
-    header.checkMagic();
-    outSizes[idx] = header.totalUncompressedWords();
-  }
-}
 
 void ansGetCompressedInfo(
     StackDeviceMemory& res,
     const void** in,
     uint32_t numInBatch,
     uint32_t* outSizes_dev,
+    uint32_t* outChecksum_dev,
     cudaStream_t stream) {
-  if (!outSizes_dev) {
+  if (!outSizes_dev && !outChecksum_dev) {
     return;
   }
 
   auto in_dev = res.copyAlloc<void*>(stream, (void**)in, numInBatch);
-
   ansGetCompressedInfoDevice(
-      res, (const void**)in_dev.data(), numInBatch, outSizes_dev, stream);
-
-  CUDA_TEST_ERROR();
+      res,
+      (const void**)in_dev.data(),
+      numInBatch,
+      outSizes_dev,
+      outChecksum_dev,
+      stream);
 }
 
 void ansGetCompressedInfoDevice(
@@ -47,18 +37,15 @@ void ansGetCompressedInfoDevice(
     const void** in_dev,
     uint32_t numInBatch,
     uint32_t* outSizes_dev,
+    uint32_t* outChecksum_dev,
     cudaStream_t stream) {
-  if (!outSizes_dev) {
+  if (!outSizes_dev && !outChecksum_dev) {
     return;
   }
 
-  auto block = 128;
-  auto grid = divUp(numInBatch, block);
-
-  ansGetCompressedInfo<<<grid, block, 0, stream>>>(
-      in_dev, numInBatch, outSizes_dev);
-
-  CUDA_TEST_ERROR();
+  auto inProvider = BatchProviderPointer((void**)in_dev);
+  ansGetCompressedInfo(
+      inProvider, numInBatch, outSizes_dev, outChecksum_dev, stream);
 }
 
 } // namespace dietgpu

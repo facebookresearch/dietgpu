@@ -17,7 +17,7 @@
 
 namespace dietgpu {
 
-void ansDecodeBatchStride(
+ANSDecodeStatus ansDecodeBatchStride(
     StackDeviceMemory& res,
     const ANSCodecConfig& config,
     uint32_t numInBatch,
@@ -33,7 +33,7 @@ void ansDecodeBatchStride(
   auto outProvider =
       BatchProviderStride(out_dev, outPerBatchStride, outPerBatchCapacity);
 
-  ansDecodeBatch(
+  return ansDecodeBatch(
       res,
       config,
       numInBatch,
@@ -44,7 +44,7 @@ void ansDecodeBatchStride(
       stream);
 }
 
-void ansDecodeBatchPointer(
+ANSDecodeStatus ansDecodeBatchPointer(
     StackDeviceMemory& res,
     const ANSCodecConfig& config,
     uint32_t numInBatch,
@@ -64,7 +64,7 @@ void ansDecodeBatchPointer(
     auto outProvider = BatchProviderInlinePointerCapacity<kBSLimit>(
         numInBatch, out, outCapacity);
 
-    ansDecodeBatch(
+    return ansDecodeBatch(
         res,
         config,
         numInBatch,
@@ -73,7 +73,6 @@ void ansDecodeBatchPointer(
         outSuccess_dev,
         outSize_dev,
         stream);
-    return;
   }
 
   // Otherwise, we have to perform h2d copies
@@ -109,7 +108,7 @@ void ansDecodeBatchPointer(
   auto outProvider =
       BatchProviderPointer(out_dev.data(), outCapacity_dev.data());
 
-  ansDecodeBatch(
+  return ansDecodeBatch(
       res,
       config,
       numInBatch,
@@ -120,7 +119,7 @@ void ansDecodeBatchPointer(
       stream);
 }
 
-void ansDecodeBatchSplitSize(
+ANSDecodeStatus ansDecodeBatchSplitSize(
     StackDeviceMemory& res,
     const ANSCodecConfig& config,
     uint32_t numInBatch,
@@ -182,7 +181,7 @@ void ansDecodeBatchSplitSize(
       sizes_dev.data() + numInBatch,
       sizeof(uint8_t));
 
-  ansDecodeBatch(
+  return ansDecodeBatch(
       res,
       config,
       numInBatch,

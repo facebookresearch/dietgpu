@@ -150,6 +150,7 @@ std::tuple<torch::Tensor, torch::Tensor, int64_t> compress_data_res(
     bool compressAsFloat,
     StackDeviceMemory& res,
     const std::vector<torch::Tensor>& tIns,
+    bool checksum,
     const c10::optional<torch::Tensor>& outCompressed,
     const c10::optional<torch::Tensor>& outCompressedSizes) {
   TORCH_CHECK(!tIns.empty());
@@ -238,8 +239,9 @@ std::tuple<torch::Tensor, torch::Tensor, int64_t> compress_data_res(
   if (compressAsFloat) {
     auto config = FloatCompressConfig(
         getFloatTypeFromTensor(tIns[0]),
-        kDefaultPrecision,
-        false /* we'll figure this out later */);
+        ANSCodecConfig(kDefaultPrecision, false),
+        false /* we'll figure this out later */,
+        checksum);
 
     floatCompress(
         res,
@@ -252,9 +254,11 @@ std::tuple<torch::Tensor, torch::Tensor, int64_t> compress_data_res(
         (uint32_t*)sizes.data_ptr(),
         at::cuda::getCurrentCUDAStream());
   } else {
+    auto config = ANSCodecConfig(kDefaultPrecision, checksum);
+
     ansEncodeBatchPointer(
         res,
-        kDefaultPrecision,
+        config,
         tIns.size(),
         inPtrs.data(),
         inSize.data(),
@@ -273,6 +277,7 @@ std::tuple<torch::Tensor, torch::Tensor, int64_t> compress_data_res(
 std::tuple<torch::Tensor, torch::Tensor, int64_t> compress_data(
     bool compressAsFloat,
     const std::vector<torch::Tensor>& tIns,
+    bool checksum,
     const c10::optional<torch::Tensor>& tempMem,
     const c10::optional<torch::Tensor>& outCompressed,
     const c10::optional<torch::Tensor>& outCompressedSizes) {
@@ -299,7 +304,7 @@ std::tuple<torch::Tensor, torch::Tensor, int64_t> compress_data(
 
   // The rest of the validation takes place here
   return compress_data_res(
-      compressAsFloat, res, tIns, outCompressed, outCompressedSizes);
+      compressAsFloat, res, tIns, checksum, outCompressed, outCompressedSizes);
 }
 
 std::tuple<std::vector<torch::Tensor>, torch::Tensor, int64_t>
@@ -307,6 +312,7 @@ compress_data_split_size(
     bool compressAsFloat,
     const torch::Tensor& tIn,
     const torch::Tensor& tSplitSizes,
+    bool checksum,
     const c10::optional<torch::Tensor>& tempMem,
     const c10::optional<torch::Tensor>& outCompressed,
     const c10::optional<torch::Tensor>& outCompressedSizes) {
@@ -411,7 +417,10 @@ compress_data_split_size(
 
   if (compressAsFloat) {
     auto config = FloatCompressConfig(
-        floatType, kDefaultPrecision, false /* we'll figure this out later */);
+        floatType,
+        ANSCodecConfig(kDefaultPrecision, false),
+        false /* we'll figure this out later */,
+        checksum);
 
     floatCompressSplitSize(
         res,
@@ -426,9 +435,11 @@ compress_data_split_size(
         (uint32_t*)sizes.data_ptr(),
         stream);
   } else {
+    auto config = ANSCodecConfig(kDefaultPrecision, checksum);
+
     ansEncodeBatchSplitSize(
         res,
-        kDefaultPrecision,
+        config,
         numInBatch,
         tIn.data_ptr(),
         // FIXME: int32_t versus uint32_t
@@ -451,6 +462,7 @@ compress_data_split_size(
 std::vector<torch::Tensor> compress_data_simple(
     bool compressAsFloat,
     const std::vector<torch::Tensor>& tIns,
+    bool checksum,
     const c10::optional<int64_t>& tempMem) {
   TORCH_CHECK(!tIns.empty());
 
@@ -464,12 +476,12 @@ std::vector<torch::Tensor> compress_data_simple(
             .dtype(at::ScalarType::Byte));
 
     // rest of validation takes place here
-    comp =
-        compress_data(compressAsFloat, tIns, scratch, at::nullopt, at::nullopt);
+    comp = compress_data(
+        compressAsFloat, tIns, checksum, scratch, at::nullopt, at::nullopt);
   } else {
     // rest of validation takes place here
     comp = compress_data(
-        compressAsFloat, tIns, at::nullopt, at::nullopt, at::nullopt);
+        compressAsFloat, tIns, checksum, at::nullopt, at::nullopt, at::nullopt);
   }
 
   auto& compMatrix_dev = std::get<0>(comp);
@@ -514,6 +526,7 @@ int64_t decompress_data_res(
     StackDeviceMemory& res,
     const std::vector<torch::Tensor>& tIns,
     const std::vector<torch::Tensor>& tOuts,
+    bool checksum,
     const c10::optional<torch::Tensor>& outStatus,
     const c10::optional<torch::Tensor>& outSizes) {
   TORCH_CHECK(!tIns.empty());
@@ -579,10 +592,11 @@ int64_t decompress_data_res(
   if (compressAsFloat) {
     auto config = FloatDecompressConfig(
         getFloatTypeFromTensor(tOuts[0]),
-        kDefaultPrecision,
-        false /* we'll figure this out later */);
+        ANSCodecConfig(kDefaultPrecision, false),
+        false /* we'll figure this out later */,
+        checksum);
 
-    floatDecompress(
+    auto decStatus = floatDecompress(
         res,
         config,
         tIns.size(),
@@ -593,10 +607,17 @@ int64_t decompress_data_res(
         // FIXME: int32_t versus uint32_t
         outSizes ? (uint32_t*)outSizes->data_ptr() : nullptr,
         at::cuda::getCurrentCUDAStream());
+
+    TORCH_CHECK(
+        decStatus.error != FloatDecompressError::ChecksumMismatch,
+        "floatDecompress: checksum mismatch seen on decoded data; "
+        "archive cannot be unpacked");
   } else {
-    ansDecodeBatchPointer(
+    auto config = ANSCodecConfig(kDefaultPrecision, checksum);
+
+    auto decStatus = ansDecodeBatchPointer(
         res,
-        kDefaultPrecision,
+        config,
         tIns.size(),
         inPtrs.data(),
         outPtrs.data(),
@@ -605,6 +626,11 @@ int64_t decompress_data_res(
         // FIXME: int32_t versus uint32_t
         outSizes ? (uint32_t*)outSizes->data_ptr() : nullptr,
         at::cuda::getCurrentCUDAStream());
+
+    TORCH_CHECK(
+        decStatus.error != ANSDecodeError::ChecksumMismatch,
+        "ANSDecode: checksum mismatch seen on decoded data; "
+        "archive cannot be unpacked");
   }
 
   // how much temporary memory we actually used
@@ -615,6 +641,7 @@ int64_t decompress_data(
     bool compressAsFloat,
     const std::vector<torch::Tensor>& tIns,
     const std::vector<torch::Tensor>& tOuts,
+    bool checksum,
     const c10::optional<torch::Tensor>& tempMem,
     const c10::optional<torch::Tensor>& outStatus,
     const c10::optional<torch::Tensor>& outSizes) {
@@ -640,7 +667,7 @@ int64_t decompress_data(
 
   // Rest of validation happens here
   return decompress_data_res(
-      compressAsFloat, res, tIns, tOuts, outStatus, outSizes);
+      compressAsFloat, res, tIns, tOuts, checksum, outStatus, outSizes);
 }
 
 int64_t decompress_data_split_size(
@@ -648,6 +675,7 @@ int64_t decompress_data_split_size(
     const std::vector<torch::Tensor>& tIns,
     torch::Tensor& tOut,
     const torch::Tensor& tSplitSizes,
+    bool checksum,
     const c10::optional<torch::Tensor>& tempMem,
     const c10::optional<torch::Tensor>& outStatus,
     const c10::optional<torch::Tensor>& outSizes) {
@@ -739,10 +767,11 @@ int64_t decompress_data_split_size(
   if (compressAsFloat) {
     auto config = FloatDecompressConfig(
         getFloatTypeFromTensor(tOut),
-        kDefaultPrecision,
-        false /* we figure this out later */);
+        ANSCodecConfig(kDefaultPrecision, false),
+        false /* we figure this out later */,
+        checksum);
 
-    floatDecompressSplitSize(
+    auto decStatus = floatDecompressSplitSize(
         res,
         config,
         numInBatch,
@@ -753,10 +782,17 @@ int64_t decompress_data_split_size(
         // FIXME: int32_t vs uint32_t
         (uint32_t*)(outSizes ? outSizes->data_ptr() : nullptr),
         stream);
+
+    TORCH_CHECK(
+        decStatus.error != FloatDecompressError::ChecksumMismatch,
+        "floatDecompress: checksum mismatch seen on decoded data; "
+        "archive cannot be unpacked");
   } else {
-    ansDecodeBatchSplitSize(
+    auto config = ANSCodecConfig(kDefaultPrecision, checksum);
+
+    auto decStatus = ansDecodeBatchSplitSize(
         res,
-        kDefaultPrecision,
+        config,
         numInBatch,
         (const void**)inPtrs.data(),
         tOut.data_ptr(),
@@ -765,6 +801,11 @@ int64_t decompress_data_split_size(
         // FIXME: int32_t vs uint32_t
         (uint32_t*)(outSizes ? outSizes->data_ptr() : nullptr),
         stream);
+
+    TORCH_CHECK(
+        decStatus.error != ANSDecodeError::ChecksumMismatch,
+        "ANSDecode: checksum mismatch seen on decoded data; "
+        "archive cannot be unpacked");
   }
 
   // how much temporary memory we actually used
@@ -774,6 +815,7 @@ int64_t decompress_data_split_size(
 std::vector<torch::Tensor> decompress_data_simple(
     bool compressAsFloat,
     const std::vector<torch::Tensor>& tIns,
+    bool checksum,
     const c10::optional<int64_t>& tempMem) {
   TORCH_CHECK(!tIns.empty());
   auto stream = at::cuda::getCurrentCUDAStream();
@@ -822,10 +864,11 @@ std::vector<torch::Tensor> decompress_data_simple(
         tIns.size(),
         sizes_dev.data(),
         types_dev.data(),
+        nullptr,
         stream);
   } else {
     ansGetCompressedInfo(
-        res, inPtrs.data(), tIns.size(), sizes_dev.data(), stream);
+        res, inPtrs.data(), tIns.size(), sizes_dev.data(), nullptr, stream);
   }
 
   auto sizes = sizes_dev.copyToHost(stream);
@@ -856,7 +899,7 @@ std::vector<torch::Tensor> decompress_data_simple(
   }
 
   decompress_data_res(
-      compressAsFloat, res, tIns, tOuts, at::nullopt, at::nullopt);
+      compressAsFloat, res, tIns, tOuts, checksum, at::nullopt, at::nullopt);
 
   return tOuts;
 }
@@ -872,19 +915,19 @@ TORCH_LIBRARY_FRAGMENT(dietgpu, m) {
 
   // data compress
   m.def(
-      "compress_data(bool compress_as_float, Tensor[] ts_in, Tensor? temp_mem=None, Tensor? out_compressed=None, Tensor? out_compressed_bytes=None) -> (Tensor, Tensor, int)");
+      "compress_data(bool compress_as_float, Tensor[] ts_in, bool checksum=False, Tensor? temp_mem=None, Tensor? out_compressed=None, Tensor? out_compressed_bytes=None) -> (Tensor, Tensor, int)");
   m.def(
-      "compress_data_split_size(bool compress_as_float, Tensor t_in, Tensor t_in_split_sizes, Tensor? temp_mem=None, Tensor? out_compressed=None, Tensor? out_compressed_bytes=None) -> (Tensor[], Tensor, int)");
+      "compress_data_split_size(bool compress_as_float, Tensor t_in, Tensor t_in_split_sizes, bool checksum=False, Tensor? temp_mem=None, Tensor? out_compressed=None, Tensor? out_compressed_bytes=None) -> (Tensor[], Tensor, int)");
   m.def(
-      "compress_data_simple(bool compress_as_float, Tensor[] ts_in, int? temp_mem=67108864) -> Tensor[]");
+      "compress_data_simple(bool compress_as_float, Tensor[] ts_in, bool checksum=False, int? temp_mem=67108864) -> Tensor[]");
 
   // data decompress
   m.def(
-      "decompress_data(bool compress_as_float, Tensor[] ts_in, Tensor[] ts_out, Tensor? temp_mem=None, Tensor? out_status=None, Tensor? out_decompressed_words=None) -> (int)");
+      "decompress_data(bool compress_as_float, Tensor[] ts_in, Tensor[] ts_out, bool checksum=False, Tensor? temp_mem=None, Tensor? out_status=None, Tensor? out_decompressed_words=None) -> (int)");
   m.def(
-      "decompress_data_split_size(bool compress_as_float, Tensor[] ts_in, Tensor t_out, Tensor t_out_split_sizes, Tensor? temp_mem=None, Tensor? out_status=None, Tensor? out_decompressed_words=None) -> (int)");
+      "decompress_data_split_size(bool compress_as_float, Tensor[] ts_in, Tensor t_out, Tensor t_out_split_sizes, bool checksum=False, Tensor? temp_mem=None, Tensor? out_status=None, Tensor? out_decompressed_words=None) -> (int)");
   m.def(
-      "decompress_data_simple(bool compress_as_float, Tensor[] ts_in, int? temp_mem=67108864) -> Tensor[]");
+      "decompress_data_simple(bool compress_as_float, Tensor[] ts_in, bool checksum=False, int? temp_mem=67108864) -> Tensor[]");
 }
 
 TORCH_LIBRARY(dietgpu, m) {

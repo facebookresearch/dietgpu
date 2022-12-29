@@ -27,13 +27,13 @@ uint32_t getMaxFloatCompressedSize(FloatType floatType, uint32_t size) {
   uint32_t baseSize = sizeof(GpuFloatHeader) + getMaxCompressedSize(size);
 
   switch (floatType) {
-    case kFloat16:
+    case FloatType::kFloat16:
       baseSize += FloatTypeInfo<FloatType::kFloat16>::getUncompDataSize(size);
       break;
-    case kBFloat16:
+    case FloatType::kBFloat16:
       baseSize += FloatTypeInfo<FloatType::kBFloat16>::getUncompDataSize(size);
       break;
-    case kFloat32:
+    case FloatType::kFloat32:
       baseSize += FloatTypeInfo<FloatType::kFloat32>::getUncompDataSize(size);
       break;
     default:
