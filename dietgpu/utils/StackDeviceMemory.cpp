@@ -201,7 +201,7 @@ StackDeviceMemory::StackDeviceMemory(int device, size_t allocPerDevice)
 StackDeviceMemory::StackDeviceMemory(int device, void* p, size_t size)
     : device_(device), stack_(device, p, size) {}
 
-StackDeviceMemory::~StackDeviceMemory() {}
+StackDeviceMemory::~StackDeviceMemory() = default;
 
 int StackDeviceMemory::getDevice() const {
   return device_;
