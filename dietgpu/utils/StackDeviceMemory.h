@@ -101,11 +101,11 @@ struct GpuMemoryReservation {
   }
 
   // Copy from the device to a host std::vector<T>, ordered wrt stream
-  std::vector<T> copyToHost(cudaStream_t stream) const {
+  std::vector<T> copyToHost(cudaStream_t stream_2) const {
     auto out = std::vector<T>(num);
 
     CUDA_VERIFY(cudaMemcpyAsync(
-        out.data(), data(), num * sizeof(T), cudaMemcpyDeviceToHost, stream));
+        out.data(), data(), num * sizeof(T), cudaMemcpyDeviceToHost, stream_2));
 
     return out;
   }
