@@ -114,7 +114,7 @@ inline __host__ __device__ bool isPointerAligned(const void* p, int align) {
 // aligned address
 template <int Align>
 inline __host__ __device__ uint32_t getAlignmentRoundUp(const void* p) {
-  static_assert(isPowerOf2(Align), "");
+  static_assert(isPowerOf2(Align));
   uint32_t diff = uint32_t(uintptr_t(p) & uintptr_t(Align - 1));
   return diff == 0 ? 0 : uint32_t(Align) - diff;
 }
