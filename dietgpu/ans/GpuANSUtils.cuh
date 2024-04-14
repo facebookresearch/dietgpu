@@ -183,8 +183,8 @@ struct __align__(32) ANSCoalescedHeader {
         ? 1
         : kBlockAlignment / sizeof(uint2);
 
-    return (
-        ANSEncodedT*)(getBlockWords(numBlocks) + roundUp(numBlocks, kAlignment));
+    return (ANSEncodedT*)(getBlockWords(numBlocks) +
+                          roundUp(numBlocks, kAlignment));
   }
 
   __device__ const ANSEncodedT* getBlockDataStart(uint32_t numBlocks) const {
@@ -192,8 +192,8 @@ struct __align__(32) ANSCoalescedHeader {
         ? 1
         : kBlockAlignment / sizeof(uint2);
 
-    return (
-        const ANSEncodedT*)(getBlockWords(numBlocks) + roundUp(numBlocks, kAlignment));
+    return (const ANSEncodedT*)(getBlockWords(numBlocks) +
+                                roundUp(numBlocks, kAlignment));
   }
 
   // (16: magic)(16: version)

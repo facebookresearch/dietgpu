@@ -615,8 +615,8 @@ __device__ void ansEncodeCoalesce(
   uint32_t limitEnd = divUp(numWords, kBlockAlignment / sizeof(ANSEncodedT));
 
   auto inT = (const LoadT*)(uncoalescedBlock + sizeof(ANSWarpState));
-  auto outT =
-      (LoadT*)(headerOut->getBlockDataStart(numBlocks) + compressedWordsPrefix[block]);
+  auto outT = (LoadT*)(headerOut->getBlockDataStart(numBlocks) +
+                       compressedWordsPrefix[block]);
 
   for (uint32_t i = tid; i < limitEnd; i += Threads) {
     outT[i] = inT[i];
