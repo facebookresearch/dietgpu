@@ -151,8 +151,8 @@ std::tuple<torch::Tensor, torch::Tensor, int64_t> compress_data_res(
     StackDeviceMemory& res,
     const std::vector<torch::Tensor>& tIns,
     bool checksum,
-    const c10::optional<torch::Tensor>& outCompressed,
-    const c10::optional<torch::Tensor>& outCompressedSizes) {
+    const std::optional<torch::Tensor>& outCompressed,
+    const std::optional<torch::Tensor>& outCompressedSizes) {
   TORCH_CHECK(!tIns.empty());
 
   // All computation will take place on this device
@@ -278,9 +278,9 @@ std::tuple<torch::Tensor, torch::Tensor, int64_t> compress_data(
     bool compressAsFloat,
     const std::vector<torch::Tensor>& tIns,
     bool checksum,
-    const c10::optional<torch::Tensor>& tempMem,
-    const c10::optional<torch::Tensor>& outCompressed,
-    const c10::optional<torch::Tensor>& outCompressedSizes) {
+    const std::optional<torch::Tensor>& tempMem,
+    const std::optional<torch::Tensor>& outCompressed,
+    const std::optional<torch::Tensor>& outCompressedSizes) {
   TORCH_CHECK(!tIns.empty());
 
   // All computation will take place on this device; set before creating the
@@ -313,9 +313,9 @@ compress_data_split_size(
     const torch::Tensor& tIn,
     const torch::Tensor& tSplitSizes,
     bool checksum,
-    const c10::optional<torch::Tensor>& tempMem,
-    const c10::optional<torch::Tensor>& outCompressed,
-    const c10::optional<torch::Tensor>& outCompressedSizes) {
+    const std::optional<torch::Tensor>& tempMem,
+    const std::optional<torch::Tensor>& outCompressed,
+    const std::optional<torch::Tensor>& outCompressedSizes) {
   // All computation will take place on this device; set before creating the
   // GpuResources object
   int dev = tIn.get_device();
@@ -463,7 +463,7 @@ std::vector<torch::Tensor> compress_data_simple(
     bool compressAsFloat,
     const std::vector<torch::Tensor>& tIns,
     bool checksum,
-    const c10::optional<int64_t>& tempMem) {
+    const std::optional<int64_t>& tempMem) {
   TORCH_CHECK(!tIns.empty());
 
   std::tuple<torch::Tensor, torch::Tensor, int64_t> comp;
@@ -527,8 +527,8 @@ int64_t decompress_data_res(
     const std::vector<torch::Tensor>& tIns,
     const std::vector<torch::Tensor>& tOuts,
     bool checksum,
-    const c10::optional<torch::Tensor>& outStatus,
-    const c10::optional<torch::Tensor>& outSizes) {
+    const std::optional<torch::Tensor>& outStatus,
+    const std::optional<torch::Tensor>& outSizes) {
   TORCH_CHECK(!tIns.empty());
   TORCH_CHECK(tIns.size() == tOuts.size());
 
@@ -642,9 +642,9 @@ int64_t decompress_data(
     const std::vector<torch::Tensor>& tIns,
     const std::vector<torch::Tensor>& tOuts,
     bool checksum,
-    const c10::optional<torch::Tensor>& tempMem,
-    const c10::optional<torch::Tensor>& outStatus,
-    const c10::optional<torch::Tensor>& outSizes) {
+    const std::optional<torch::Tensor>& tempMem,
+    const std::optional<torch::Tensor>& outStatus,
+    const std::optional<torch::Tensor>& outSizes) {
   TORCH_CHECK(!tIns.empty());
 
   // All computation will take place on this device; set before creating the
@@ -676,9 +676,9 @@ int64_t decompress_data_split_size(
     torch::Tensor& tOut,
     const torch::Tensor& tSplitSizes,
     bool checksum,
-    const c10::optional<torch::Tensor>& tempMem,
-    const c10::optional<torch::Tensor>& outStatus,
-    const c10::optional<torch::Tensor>& outSizes) {
+    const std::optional<torch::Tensor>& tempMem,
+    const std::optional<torch::Tensor>& outStatus,
+    const std::optional<torch::Tensor>& outSizes) {
   TORCH_CHECK(!tIns.empty());
 
   // All computation will take place on this device; set before creating the
@@ -816,7 +816,7 @@ std::vector<torch::Tensor> decompress_data_simple(
     bool compressAsFloat,
     const std::vector<torch::Tensor>& tIns,
     bool checksum,
-    const c10::optional<int64_t>& tempMem) {
+    const std::optional<int64_t>& tempMem) {
   TORCH_CHECK(!tIns.empty());
   auto stream = at::cuda::getCurrentCUDAStream();
 
