@@ -158,13 +158,13 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
     c_bw = (total_size / 1e9) / (c * 1e-3)
     dc_bw = (total_size / 1e9) / (dc * 1e-3)
 
-    print("Float codec non-batched perf [128 * 512 * 1024] {}".format(dt))
+    print(f"Float codec non-batched perf [128 * 512 * 1024] {dt}")
     print(
         "comp   time {:.3f} ms B/W {:.1f} GB/s, compression {} -> {} bytes ({:.4f}x) ".format(
             c, c_bw, total_size, comp_size, ratio
         )
     )
-    print("decomp time {:.3f} ms B/W {:.1f} GB/s".format(dc, dc_bw))
+    print(f"decomp time {dc:.3f} ms B/W {dc_bw:.1f} GB/s")
 
     # Batched
     ts = []
@@ -176,13 +176,13 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
     bw = (total_size / 1e9) / (c * 1e-3)
     dc_bw = (total_size / 1e9) / (dc * 1e-3)
 
-    print("Float codec batched perf [128, [512 * 1024]] {}".format(dt))
+    print(f"Float codec batched perf [128, [512 * 1024]] {dt}")
     print(
         "comp   time {:.3f} ms B/W {:.1f} GB/s, compression {} -> {} bytes ({:.4f}x) ".format(
             c, c_bw, total_size, comp_size, ratio
         )
     )
-    print("decomp time {:.3f} ms B/W {:.1f} GB/s".format(dc, dc_bw))
+    print(f"decomp time {dc:.3f} ms B/W {dc_bw:.1f} GB/s")
 
 print("\n")
 
@@ -196,13 +196,13 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
     c_bw = (total_size / 1e9) / (c * 1e-3)
     dc_bw = (total_size / 1e9) / (dc * 1e-3)
 
-    print("Raw ANS byte-wise non-batched perf [128 * 512 * 1024] {}".format(dt))
+    print(f"Raw ANS byte-wise non-batched perf [128 * 512 * 1024] {dt}")
     print(
         "comp   time {:.3f} ms B/W {:.1f} GB/s, compression {} -> {} bytes ({:.4f}x) ".format(
             c, c_bw, total_size, comp_size, ratio
         )
     )
-    print("decomp time {:.3f} ms B/W {:.1f} GB/s".format(dc, dc_bw))
+    print(f"decomp time {dc:.3f} ms B/W {dc_bw:.1f} GB/s")
 
     # Batched
     ts = []
@@ -214,10 +214,10 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
     c_bw = (total_size / 1e9) / (c * 1e-3)
     dc_bw = (total_size / 1e9) / (dc * 1e-3)
 
-    print("Raw ANS byte-wise batched perf [128, [512 * 1024]] {}".format(dt))
+    print(f"Raw ANS byte-wise batched perf [128, [512 * 1024]] {dt}")
     print(
         "comp   time {:.3f} ms B/W {:.1f} GB/s, compression {} -> {} bytes ({:.4f}x) ".format(
             c, c_bw, total_size, comp_size, ratio
         )
     )
-    print("decomp time {:.3f} ms B/W {:.1f} GB/s".format(dc, dc_bw))
+    print(f"decomp time {dc:.3f} ms B/W {dc_bw:.1f} GB/s")

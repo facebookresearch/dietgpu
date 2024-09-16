@@ -14,9 +14,7 @@ def run_test(dev, ts, temp_mem=None):
     comp, sizes, _ = torch.ops.dietgpu.compress_data(True, ts, True, temp_mem)
     for s, t in zip(sizes, ts):
         t_bytes = t.numel() * t.element_size()
-        print(
-            "{} bytes -> {} bytes ({}x)".format(t_bytes, s.item(), s.item() / t_bytes)
-        )
+        print(f"{t_bytes} bytes -> {s.item()} bytes ({s.item() / t_bytes}x)")
 
     # Truncate the output data to exactly the sizes that are used
     # (i.e., we are testing that the byte sizes we report in compression are accurate)
