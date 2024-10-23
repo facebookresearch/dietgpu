@@ -77,7 +77,7 @@ The rANS codec operates on 8 bit bytes. It can compress arbitrary data, but usin
 
 ## Float codec
 
-The floating point compressor at the moment uses the rANS codec to handle compression of floating point exponents, as typically in ML/HPC data a very limited exponent dynamic range is used and is highly compressible. Floating point sign and significand values tend to be less compressible / fairly high entropy in practice, though sparse data or presence of functions like ReLU in neural networks can result in a lot of outright zero values which are very compressible. A future extension to the library will allow for specialized compression of sparse or semi-sparse data, specializing compression of zeros. At the moment only float16 (IEEE 754 binary16) and bfloat16 (fields of the most significant 16 bits of a IEEE 754 binary32 word) are supported, with float32 (IEEE 754 binary32) support coming shortly.
+The floating point compressor at the moment uses the rANS codec to handle compression of floating point exponents, as typically in ML/HPC data a very limited exponent dynamic range is used and is highly compressible. Floating point sign and significand values tend to be less compressible / fairly high entropy in practice, though sparse data or presence of functions like ReLU in neural networks can result in a lot of outright zero values which are very compressible. A future extension to the library will allow for specialized compression of sparse or semi-sparse data, specializing compression of zeros. At the moment only float16 (IEEE 754 binary16), float32 (IEEE 754 binary32), and bfloat16 (fields of the most significant 16 bits of a IEEE 754 binary32 word) are supported, with float64 (IEEE 754 binary64) support coming later.
 
 ## API design
 
@@ -98,7 +98,7 @@ Performance depends upon many factors, including entropy of the input data (high
 
 ## Planned extensions
 
-- float32 support, possibly float64 support
+- float64 support
 - compression options to expect semi-sparse floating point data for higher compression (>10% zero values)
 - a fused kernel implementation (likely using CUDA cooperative groups) to support single-kernel compression and decompression minimizing temporary memory usage
 - a fused kernel implementation using the above to support persistent NCCL-like all-reduce for collective communications libraries
