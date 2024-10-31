@@ -477,11 +477,16 @@ std::vector<torch::Tensor> compress_data_simple(
 
     // rest of validation takes place here
     comp = compress_data(
-        compressAsFloat, tIns, checksum, scratch, at::nullopt, at::nullopt);
+        compressAsFloat, tIns, checksum, scratch, std::nullopt, std::nullopt);
   } else {
     // rest of validation takes place here
     comp = compress_data(
-        compressAsFloat, tIns, checksum, at::nullopt, at::nullopt, at::nullopt);
+        compressAsFloat,
+        tIns,
+        checksum,
+        std::nullopt,
+        std::nullopt,
+        std::nullopt);
   }
 
   auto& compMatrix_dev = std::get<0>(comp);
@@ -899,7 +904,7 @@ std::vector<torch::Tensor> decompress_data_simple(
   }
 
   decompress_data_res(
-      compressAsFloat, res, tIns, tOuts, checksum, at::nullopt, at::nullopt);
+      compressAsFloat, res, tIns, tOuts, checksum, std::nullopt, std::nullopt);
 
   return tOuts;
 }
