@@ -19,7 +19,7 @@ __global__ void ansGetCompressedInfoKernel(
     uint32_t numInBatch,
     uint32_t* outSizes,
     uint32_t* outChecksum) {
-  int batch = blockIdx.x * blockDim.x + threadIdx.x;
+  auto batch = blockIdx.x * blockDim.x + threadIdx.x;
   if (batch < numInBatch) {
     auto header = (const ANSCoalescedHeader*)inProvider.getBatchStart(batch);
     // Make sure it is valid

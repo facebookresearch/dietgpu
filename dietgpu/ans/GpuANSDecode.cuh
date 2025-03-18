@@ -308,7 +308,7 @@ __global__ __launch_bounds__(128) void ansDecodeKernel(
     OutProvider outProvider,
     uint8_t* __restrict__ outSuccess,
     uint32_t* __restrict__ outSize) {
-  int tid = threadIdx.x;
+  auto tid = threadIdx.x;
   auto batch = blockIdx.y;
 
   // Interpret header as uint4
@@ -366,7 +366,7 @@ __global__ __launch_bounds__(128) void ansDecodeKernel(
   int globalWarpId =
       __shfl_sync(0xffffffff, (blockIdx.x * blockDim.x + tid) / kWarpSize, 0);
 
-  int warpsPerGrid = gridDim.x * Threads / kWarpSize;
+  auto warpsPerGrid = gridDim.x * Threads / kWarpSize;
   int laneId = getLaneId();
 
   for (int block = globalWarpId; block < numBlocks; block += warpsPerGrid) {
@@ -407,8 +407,8 @@ __global__ void ansDecodeTable(
     BatchProvider inProvider,
     uint32_t probBits,
     TableT* __restrict__ table) {
-  int batch = blockIdx.x;
-  int tid = threadIdx.x;
+  auto batch = blockIdx.x;
+  auto tid = threadIdx.x;
   int warpId = tid / kWarpSize;
   int laneId = getLaneId();
 

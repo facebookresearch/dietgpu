@@ -30,7 +30,7 @@ __device__ void histogramSingle(
   // banks?
   __shared__ uint32_t buckets[kWarps][kNumSymbols + 1];
 
-  int warpId = threadIdx.x / kWarpSize;
+  auto warpId = threadIdx.x / kWarpSize;
 
 #pragma unroll
   for (int i = 0; i < kWarps; ++i) {
@@ -135,7 +135,7 @@ __device__ void histogramSingle(
 
 template <typename InProvider, int Threads>
 __global__ void histogramBatch(InProvider in, uint32_t* out) {
-  int batch = blockIdx.y;
+  auto batch = blockIdx.y;
   out += batch * kNumSymbols;
 
   histogramSingle<Threads>(
@@ -196,7 +196,7 @@ __device__ void normalizeProbabilitiesFromHistogram(
 
   constexpr int kWarps = Threads / kWarpSize;
   uint32_t kProbWeight = 1 << probBits;
-  int tid = threadIdx.x;
+  auto tid = threadIdx.x;
   int warpId = tid / kWarpSize;
   int laneId = getLaneId();
 
@@ -372,7 +372,7 @@ __global__ void quantizeWeights(
     SizeProvider sizeProvider,
     int probBits,
     uint4* __restrict__ table) {
-  int batch = blockIdx.x;
+  auto batch = blockIdx.x;
 
   normalizeProbabilitiesFromHistogram<Threads>(
       counts + batch * kNumSymbols,

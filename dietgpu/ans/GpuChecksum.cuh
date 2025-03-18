@@ -94,7 +94,7 @@ __device__ void checksumSingle(
 
 template <typename InProvider, int Threads>
 __global__ void checksumBatch(InProvider in, uint32_t* out) {
-  int batch = blockIdx.y;
+  auto batch = blockIdx.y;
   out += batch;
 
   checksumSingle<Threads>(

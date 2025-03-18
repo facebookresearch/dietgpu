@@ -297,8 +297,8 @@ __global__ void splitFloat(
   constexpr int kWarps = Threads / kWarpSize;
   static_assert(Threads == kNumSymbols, "");
 
-  int batch = blockIdx.y;
-  int warpId = threadIdx.x / kWarpSize;
+  auto batch = blockIdx.y;
+  auto warpId = threadIdx.x / kWarpSize;
 
   histogramOut += batch * kNumSymbols;
   checksum += batch;

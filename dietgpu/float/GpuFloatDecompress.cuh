@@ -286,7 +286,7 @@ __global__ void joinFloat(
   using CompT = typename FTI::CompT;
   using NonCompT = typename FTI::NonCompT;
 
-  int batch = blockIdx.y;
+  auto batch = blockIdx.y;
 
   auto curCompIn = (const CompT*)inProviderComp.getBatchStart(batch);
   auto curHeaderIn =

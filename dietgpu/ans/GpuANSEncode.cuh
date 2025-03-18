@@ -315,7 +315,7 @@ __device__ void ansEncodeBlocksFull(
     // the encoding table that we will load into smem
     const uint4* __restrict__ table) {
   // grid-wide warp id
-  int tid = threadIdx.x;
+  auto tid = threadIdx.x;
   // so we know the block is warp uniform
   int block =
       __shfl_sync(0xffffffff, (blockIdx.x * blockDim.x + tid) / kWarpSize, 0);
@@ -444,7 +444,7 @@ __global__ void ansEncodeBatchFull(
     // [batch][kNumSymbols]
     const uint4* __restrict__ table) {
   // which batch element we are processing
-  int batch = blockIdx.y;
+  auto batch = blockIdx.y;
 
   // Number of blocks for the current problem
   uint32_t curSize = inProvider.getBatchSize(batch);
@@ -478,7 +478,7 @@ __global__ void ansEncodeBatchPartial(
     // [batch][kNumSymbols]
     const uint4* __restrict__ table) {
   // which batch element we are processing
-  int batch = blockIdx.y;
+  auto batch = blockIdx.y;
 
   // Number of blocks for the current problem
   uint32_t curSize = inProvider.getBatchSize(batch);
@@ -522,8 +522,8 @@ __device__ void ansEncodeCoalesce(
     uint32_t uncompressedWords,
     uint8_t* __restrict__ out,
     uint32_t* __restrict__ compressedBytes) {
-  int block = blockIdx.x;
-  int tid = threadIdx.x;
+  auto block = blockIdx.x;
+  auto tid = threadIdx.x;
 
   ANSCoalescedHeader* headerOut = (ANSCoalescedHeader*)out;
 
@@ -591,7 +591,7 @@ __device__ void ansEncodeCoalesce(
   auto blockWordsOut = headerOut->getBlockWords(numBlocks);
 
   // Write out per-block word length
-  for (int i = blockIdx.x * Threads + tid; i < numBlocks;
+  for (auto i = blockIdx.x * Threads + tid; i < numBlocks;
        i += gridDim.x * Threads) {
     uint32_t lastBlockWords = uncompressedWords % kDefaultBlockSize;
     lastBlockWords = lastBlockWords == 0 ? kDefaultBlockSize : lastBlockWords;
@@ -637,7 +637,7 @@ __global__ void ansEncodeCoalesceBatch(
     bool useChecksum,
     OutProvider outProvider,
     uint32_t* __restrict__ compressedBytes) {
-  int batch = blockIdx.y;
+  auto batch = blockIdx.y;
   auto uncompressedWords = sizeProvider.getBatchSize(batch);
 
   // Number of compressed blocks in this batch element
