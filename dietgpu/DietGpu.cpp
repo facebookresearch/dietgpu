@@ -890,13 +890,13 @@ std::vector<torch::Tensor> decompress_data_simple(
       TORCH_CHECK(type == types[0]); // must be consistent dtype
 
       tOut = torch::empty(
-          {(int)size},
+          {static_cast<int>(size)},
           at::TensorOptions()
               .device(tIns[0].device())
               .dtype(getDtypeFromFloatType((FloatType)type)));
     } else {
       tOut = torch::empty(
-          {(int)size},
+          {static_cast<int>(size)},
           at::TensorOptions().device(tIns[0].device()).dtype(torch::kByte));
     }
 
