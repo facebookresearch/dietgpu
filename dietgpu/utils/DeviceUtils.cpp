@@ -107,12 +107,13 @@ int getDeviceForAddress(const void* p) {
   cudaPointerAttributes att;
   cudaError_t err = cudaPointerGetAttributes(&att, p);
   CHECK(err == cudaSuccess || err == cudaErrorInvalidValue)
-      << "unknown error " << (int)err;
+      << "unknown error " << static_cast<int>(err);
 
   if (err == cudaErrorInvalidValue) {
     // Make sure the current thread error status has been reset
     err = cudaGetLastError();
-    CHECK_EQ(err, cudaErrorInvalidValue) << "unknown error " << (int)err;
+    CHECK_EQ(err, cudaErrorInvalidValue)
+        << "unknown error " << static_cast<int>(err);
 
     return -1;
   }
