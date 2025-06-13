@@ -167,7 +167,7 @@ class StackDeviceMemory {
     auto mem = alloc<T>(stream, size, type);
 
     CUDA_VERIFY(
-        cudaMemcpyAsync(mem.data(), ptr, size, cudaMemcpyHostToDevice, stream));
+        cudaMemcpyAsync(mem.data(), ptr, size, cudaMemcpyDefault, stream));
 
     return mem;
   }
