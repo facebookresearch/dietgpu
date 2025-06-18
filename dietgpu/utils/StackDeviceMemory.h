@@ -17,6 +17,7 @@
 #include <vector>
 
 namespace dietgpu {
+constexpr size_t kDefaultStackSize = 256 * 1024 * 1024;
 
 // All memory allocations are aligned to this boundary and are a multiple of
 // this size in bytes
@@ -295,6 +296,6 @@ void GpuMemoryReservation<T>::release() {
 
 // Construct a StackDeviceMemory for the current device pre-allocating the given
 // amount of memory
-StackDeviceMemory makeStackMemory(size_t bytes = 256 * 1024 * 1024);
+StackDeviceMemory makeStackMemory(size_t bytes = kDefaultStackSize);
 
 } // namespace dietgpu
