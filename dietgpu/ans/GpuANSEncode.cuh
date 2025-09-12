@@ -18,6 +18,7 @@
 #include "dietgpu/utils/StaticUtils.h"
 
 #include <glog/logging.h>
+#include <thrust/detail/config.h>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -499,7 +500,7 @@ struct Align {
   typedef uint32_t argument_type;
   typedef uint32_t result_type;
 
-  __thrust_exec_check_disable__ template <typename T>
+  _CCCL_EXEC_CHECK_DISABLE template <typename T>
   __host__ __device__ uint32_t operator()(T x) const {
     constexpr int kDiv = B / sizeof(A);
     constexpr int kSize = kDiv < 1 ? 1 : kDiv;
