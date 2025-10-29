@@ -502,11 +502,12 @@ std::vector<torch::Tensor> compress_data_simple(
   for (int i = 0; i < tIns.size(); ++i) {
     auto compSize = ((int32_t*)size_host.data_ptr())[i];
 
-    out.emplace_back(torch::empty(
-        {compSize},
-        at::TensorOptions()
-            .device(tIns[0].device())
-            .dtype(at::ScalarType::Byte)));
+    out.emplace_back(
+        torch::empty(
+            {compSize},
+            at::TensorOptions()
+                .device(tIns[0].device())
+                .dtype(at::ScalarType::Byte)));
 
     // FIXME: custom batch kernel to avoid N cudaMemcpy calls?
     CUDA_VERIFY(cudaMemcpyAsync(

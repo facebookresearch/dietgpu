@@ -500,8 +500,12 @@ struct Align {
   typedef uint32_t argument_type;
   typedef uint32_t result_type;
 
-  _CCCL_EXEC_CHECK_DISABLE template <typename T>
-  __host__ __device__ uint32_t operator()(T x) const {
+#if (__CUDACC_VER_MAJOR__ < 12) || \
+    (__CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ < 8)
+  __thrust_exec_check_disable__
+#endif
+      template <typename T>
+      __host__ __device__ uint32_t operator()(T x) const {
     constexpr int kDiv = B / sizeof(A);
     constexpr int kSize = kDiv < 1 ? 1 : kDiv;
 

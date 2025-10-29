@@ -65,8 +65,8 @@ struct ANSWarpState {
 };
 
 struct __align__(32) ANSCoalescedHeader {
-  static __host__ __device__ uint32_t getCompressedOverhead(
-      uint32_t numBlocks) {
+  static __host__ __device__ uint32_t
+  getCompressedOverhead(uint32_t numBlocks) {
     constexpr int kAlignment = kBlockAlignment / sizeof(uint2) == 0
         ? 1
         : kBlockAlignment / sizeof(uint2);
