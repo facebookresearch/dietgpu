@@ -80,13 +80,13 @@ class TestANSCodec(unittest.TestCase):
         dev = torch.device("cuda:0")
         temp_mem = torch.empty([64 * 1024 * 1024], dtype=torch.uint8, device=dev)
 
-        for tries in range(5):
+        for _ in range(5):
             batch_size = random.randrange(1, 15)
             sizes = []
 
             sum_sizes = 0
             max_size = 0
-            for i in range(batch_size):
+            for _ in range(batch_size):
                 size = random.randrange(1, 10000)
                 # meet required alignment
                 size += 4 - (size % 4)
@@ -112,12 +112,12 @@ class TestANSCodec(unittest.TestCase):
         dev = torch.device("cuda:0")
         temp_mem = torch.empty([64 * 1024 * 1024], dtype=torch.uint8, device=dev)
 
-        for tries in range(5):
+        for _ in range(5):
             batch_size = random.randrange(1, 15)
             sizes = []
 
             sum_sizes = 0
-            for i in range(batch_size):
+            for _ in range(batch_size):
                 size = random.randrange(1, 10000)
                 # meet required alignment
                 size += 4 - (size % 4)
