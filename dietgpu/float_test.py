@@ -113,13 +113,13 @@ class TestFloatCodec(unittest.TestCase):
 
         for dt in [torch.bfloat16, torch.float16, torch.float32]:
             for align16 in [True, False]:
-                for tries in range(5):
+                for _ in range(5):
                     batch_size = random.randrange(1, 15)
                     sizes = []
 
                     sum_sizes = 0
                     max_size = 0
-                    for i in range(batch_size):
+                    for _ in range(batch_size):
                         size = random.randrange(1, 10000)
                         if align16:
                             # 2 bytes per float, ensure 16 byte alignment
@@ -150,12 +150,12 @@ class TestFloatCodec(unittest.TestCase):
 
         for dt in [torch.bfloat16, torch.float16, torch.float32]:
             for align16 in [True, False]:
-                for tries in range(5):
+                for _ in range(5):
                     batch_size = random.randrange(1, 15)
                     sizes = []
 
                     sum_sizes = 0
-                    for i in range(batch_size):
+                    for _ in range(batch_size):
                         size = random.randrange(1, 10000)
                         if align16:
                             # 2 bytes per float, ensure 16 byte alignment
