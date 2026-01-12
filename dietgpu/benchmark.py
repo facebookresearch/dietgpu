@@ -98,7 +98,7 @@ def get_any_comp_timings(ts, num_runs=3):
     comp_size = 0
 
     # ignore first run timings
-    for i in range(1 + num_runs):
+    for _ in range(1 + num_runs):
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
 
@@ -168,7 +168,7 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
 
     # Batched
     ts = []
-    for i in range(128):
+    for _ in range(128):
         ts.append(torch.normal(0, 1.0, [512 * 1024], dtype=dt, device=dev))
 
     c, dc, total_size, comp_size = get_float_comp_timings(ts)
@@ -206,7 +206,7 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
 
     # Batched
     ts = []
-    for i in range(128):
+    for _ in range(128):
         ts.append(torch.normal(0, 1.0, [512 * 1024], dtype=dt, device=dev))
 
     c, dc, total_size, comp_size = get_any_comp_timings(ts)
