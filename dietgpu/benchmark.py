@@ -113,8 +113,6 @@ def get_any_comp_timings(ts, num_runs=3):
         )
         end.record()
 
-        comp_size = 0
-
         torch.cuda.synchronize()
         comp_time = start.elapsed_time(end)
 
