@@ -499,8 +499,9 @@ struct Align {
   typedef uint32_t argument_type;
   typedef uint32_t result_type;
 
-#if (__CUDACC_VER_MAJOR__ < 12) || \
-    (__CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ < 8)
+#if defined(_CCCL_EXEC_CHECK_DISABLE)
+  _CCCL_EXEC_CHECK_DISABLE
+#elif defined(__thrust_exec_check_disable__)
   __thrust_exec_check_disable__
 #endif
       template <typename T>
